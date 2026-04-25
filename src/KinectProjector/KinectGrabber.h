@@ -23,9 +23,10 @@ General Public License for more details.
 #include "ofMain.h"
 #include "ofxOpenCv.h"
 #include "ofxCv.h"
-#include "ofxKinect.h"
+#include "DepthCamera.h"
 
 #include "Utils.h"
+#include <memory>
 
 class KinectGrabber: public ofThread {
 public:
@@ -37,8 +38,10 @@ public:
     void start();
     void stop();
     void performInThread(std::function<void(KinectGrabber&)> action);
-    bool setup();
+	bool setup();
 	bool openKinect();
+	std::string getCameraName() const;
+	DepthCameraType getCameraType() const;
 	void setupFramefilter(int gradFieldresolution, float newMaxOffset, ofRectangle ROI, bool spatialFilter, bool followBigChange, int numAveragingSlots);
     void initiateBuffers(void); // Reinitialise buffers
     void resetBuffers(void);
@@ -124,9 +127,11 @@ private:
 	vector<std::function<void(KinectGrabber&)> > actions;
 	ofMutex actionsLock;
     
-    // Kinect parameters
+	// Kinect parameters
 	bool kinectOpened;
-    ofxKinect               kinect;
+	DepthCameraType requestedCameraType;
+	DepthCameraType activeCameraType;
+	std::unique_ptr<DepthCamera> camera;
     unsigned int width, height; // Width and height of kinect frames
 	int minX, maxX; // , ROIwidth; // ROI definition
 	int minY, maxY; //, ROIheight;

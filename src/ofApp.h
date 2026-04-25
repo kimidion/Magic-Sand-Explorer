@@ -51,6 +51,7 @@ public:
 	void gotMessage(ofMessage msg);
 
 	std::shared_ptr<ofAppBaseWindow> projWindow;
+	bool projectorDisplayDetected = false;
 
 private:
 	std::shared_ptr<KinectProjector> kinectProjector;

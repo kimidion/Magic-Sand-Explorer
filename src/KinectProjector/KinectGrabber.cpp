@@ -20,12 +20,18 @@ General Public License for more details.
 ***********************************************************************/
 
 #include "KinectGrabber.h"
+#include "KinectV1DepthCamera.h"
+#include "KinectV2DepthCamera.h"
 #include "ofConstants.h"
 
 KinectGrabber::KinectGrabber()
 :newFrame(true),
 bufferInitiated(false),
-kinectOpened(false)
+kinectOpened(false),
+requestedCameraType(DepthCameraType::Auto),
+activeCameraType(DepthCameraType::Auto),
+width(640),
+height(480)
 {
 }
 
@@ -56,22 +62,104 @@ bool KinectGrabber::setup(){
 	doInPaint = 0;
 	doFullFrameFiltering = false;
 
-	kinect.init();
-	kinect.setRegistration(true); // To have correspondance between RGB and depth images
-	kinect.setUseTexture(false);
-	width = kinect.getWidth();
-	height = kinect.getHeight();
+	vector<DepthCameraType> cameraTypes;
+	if (requestedCameraType == DepthCameraType::Auto)
+	{
+		cameraTypes.push_back(DepthCameraType::KinectV1);
+		cameraTypes.push_back(DepthCameraType::KinectV2);
+	}
+	else
+	{
+		cameraTypes.push_back(requestedCameraType);
+	}
+
+	kinectOpened = false;
+	std::unique_ptr<DepthCamera> fallbackCamera;
+	DepthCameraType fallbackCameraType = DepthCameraType::Auto;
+	for (auto cameraType : cameraTypes)
+	{
+		std::unique_ptr<DepthCamera> candidateCamera;
+		if (cameraType == DepthCameraType::KinectV1)
+		{
+			candidateCamera = std::make_unique<KinectV1DepthCamera>();
+		}
+		else if (cameraType == DepthCameraType::KinectV2)
+		{
+			candidateCamera = std::make_unique<KinectV2DepthCamera>();
+		}
+
+		if (candidateCamera && candidateCamera->setup())
+		{
+			if (!fallbackCamera)
+			{
+				fallbackCameraType = cameraType;
+				fallbackCamera = std::move(candidateCamera);
+				candidateCamera = nullptr;
+			}
+
+			DepthCamera* cameraToOpen = candidateCamera ? candidateCamera.get() : fallbackCamera.get();
+			if (cameraToOpen->open())
+			{
+				camera = candidateCamera ? std::move(candidateCamera) : std::move(fallbackCamera);
+				width = camera->getWidth();
+				height = camera->getHeight();
+				activeCameraType = cameraType;
+				kinectOpened = true;
+				ofLogVerbose("kinectGrabber") << "setup(): Opened " << camera->getName();
+				break;
+			}
+		}
+	}
+
+	if (!camera)
+	{
+		if (fallbackCamera)
+		{
+			camera = std::move(fallbackCamera);
+			activeCameraType = fallbackCameraType;
+		}
+		else
+		{
+			camera = std::make_unique<KinectV1DepthCamera>();
+			camera->setup();
+			activeCameraType = DepthCameraType::KinectV1;
+		}
+		width = camera->getWidth();
+		height = camera->getHeight();
+	}
 
 	kinectDepthImage.allocate(width, height, 1);
     filteredframe.allocate(width, height, 1);
     kinectColorImage.allocate(width, height);
     kinectColorImage.setUseTexture(false);
-	return openKinect();
+	return kinectOpened;
 }
 
 bool KinectGrabber::openKinect() {
-	kinectOpened = kinect.open();
+	if (!camera)
+	{
+		kinectOpened = false;
+		return false;
+	}
+
+	kinectOpened = camera->open();
+	if (kinectOpened)
+	{
+		width = camera->getWidth();
+		height = camera->getHeight();
+		ofLogVerbose("kinectGrabber") << "openKinect(): Opened " << camera->getName();
+	}
 	return kinectOpened;
+}
+
+std::string KinectGrabber::getCameraName() const
+{
+	return camera ? camera->getName() : "No depth camera";
+}
+
+DepthCameraType KinectGrabber::getCameraType() const
+{
+	return activeCameraType;
 }
 void KinectGrabber::setupFramefilter(int sgradFieldresolution, float newMaxOffset, ofRectangle ROI, bool sspatialFilter, bool sfollowBigChange, int snumAveragingSlots) {
     gradFieldresolution = sgradFieldresolution;
@@ -163,13 +251,16 @@ void KinectGrabber::threadedFunction() {
         this->actions.clear();
         this->actionsLock.unlock();
         
-        kinect.update();
-        if(kinect.isFrameNew()){
-            kinectDepthImage = kinect.getRawDepthPixels();
+        if (camera)
+        {
+            camera->update();
+        }
+        if(camera && camera->isFrameNew()){
+            kinectDepthImage = camera->getRawDepthPixels();
             filter();
             filteredframe.setImageType(OF_IMAGE_GRAYSCALE);
             updateGradientField();
-			kinectColorImage.setFromPixels(kinect.getPixels());
+			kinectColorImage.setFromPixels(camera->getColorPixels());
         }
         if (storedframes == 0)
         {
@@ -182,11 +273,17 @@ void KinectGrabber::threadedFunction() {
         }
         
     }
-    kinect.close();
-    delete[] averagingBuffer;
-    delete[] statBuffer;
-    delete[] validBuffer;
-    delete[] gradField;
+    if (camera)
+    {
+        camera->close();
+    }
+	if (bufferInitiated)
+	{
+		delete[] averagingBuffer;
+		delete[] statBuffer;
+		delete[] validBuffer;
+		delete[] gradField;
+	}
 }
 
 void KinectGrabber::performInThread(std::function<void(KinectGrabber&)> action) {
@@ -633,14 +730,9 @@ float KinectGrabber::getValidBuffer(int x, int y){
 
 ofMatrix4x4 KinectGrabber::getWorldMatrix() {
 	auto mat = ofMatrix4x4();
-	if (kinectOpened) {
-		ofVec3f a = kinect.getWorldCoordinateAt(0, 0, 1);// Trick to access kinect internal parameters without having to modify ofxKinect
-		ofVec3f b = kinect.getWorldCoordinateAt(1, 1, 1);
+	if (kinectOpened && camera) {
 		ofLogVerbose("kinectGrabber") << "getWorldMatrix(): Computing kinect world matrix";
-		mat = ofMatrix4x4(b.x - a.x, 0, 0, a.x,
-			0, b.y - a.y, 0, a.y,
-			0, 0, 0, 1,
-			0, 0, 0, 1);
+		mat = camera->getWorldMatrix();
 	}
 	return mat;
 }

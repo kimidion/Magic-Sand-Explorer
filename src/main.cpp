@@ -24,7 +24,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "ofApp.h"
 #include "GLFW/glfw3.h"
 
-const std::string MagicSandVersion = "1.5.4.2";
+const std::string MagicSandVersion = "2.0.0.0";
 
 bool setWindowDimensions(ofGLFWWindowSettings& settings, int windowsNum) {
 	int count;
@@ -77,7 +77,7 @@ int main() {
 	mainWindow->setWindowPosition(ofGetScreenWidth() / 2 - settings.getWidth() / 2, ofGetScreenHeight() / 2 - settings.getHeight() / 2);
     mainWindow->setWindowShape(settings.getWidth(), settings.getHeight());
     
-	setWindowDimensions(settings, 1);
+	bool projectorDisplayDetected = setWindowDimensions(settings, 1);
 	settings.resizable = false;
 	settings.decorated = false;
 	settings.shareContextWith = mainWindow;
@@ -87,6 +87,7 @@ int main() {
 	shared_ptr<ofApp> mainApp(new ofApp);
 	ofAddListener(secondWindow->events().draw, mainApp.get(), &ofApp::drawProjWindow);
 	mainApp->projWindow = secondWindow;
+	mainApp->projectorDisplayDetected = projectorDisplayDetected;
 		
 	ofRunApp(mainWindow, mainApp);
 	ofRunMainLoop();

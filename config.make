@@ -76,7 +76,11 @@
 # add a runtime path to search for those shared libraries, since they aren't 
 # incorporated directly into the final executable application binary.
 ################################################################################
-# PROJECT_LDFLAGS=-Wl,-rpath=./libs
+LIBFREENECT2_ROOT = $(shell cd $(PROJECT_ROOT) && pwd)/deps/libfreenect2/install
+
+PROJECT_LDFLAGS += -L$(LIBFREENECT2_ROOT)/lib
+PROJECT_LDFLAGS += -lfreenect2
+PROJECT_LDFLAGS += -Wl,-rpath,$(LIBFREENECT2_ROOT)/lib
 
 ################################################################################
 # PROJECT DEFINES
@@ -100,7 +104,7 @@
 # 
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_CFLAGS = 
+PROJECT_CFLAGS += -I$(LIBFREENECT2_ROOT)/include
 
 ################################################################################
 # PROJECT CXXFLAGS
@@ -113,7 +117,7 @@
 #
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_CXXFLAGS = 
+# PROJECT_CXXFLAGS =
 
 ################################################################################
 # PROJECT OPTIMIZATION CFLAGS

@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***********************************************************************/
 
 #include "KinectProjector.h"
+#include "GLFW/glfw3.h"
 #include <sstream>
 
 using namespace ofxCSG;
@@ -54,6 +55,7 @@ waitingForFlattenSand (false),
 drawKinectView(false),
 drawKinectColorView(true)
 {
+	secondScreenFound = true;
 	doShowROIonProjector = false;
 	applicationState = APPLICATION_STATE_SETUP;
     projWindow = p;
@@ -103,11 +105,10 @@ void KinectProjector::setup(bool sdisplayGui)
 
     // kinectgrabber: start & default setup
 	kinectOpened = kinectgrabber.setup();
-	lastKinectOpenTry = ofGetElapsedTimef(); 
 	if (!kinectOpened)
 	{
 		// If the kinect is not found and opened (which happens very often on Windows 10) then just go with default values for the Kinect
-		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Kinect not found - trying again later";
+		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Kinect not found - use Recheck Hardware after connecting it";
 	}
 
 	doInpainting = false;
@@ -157,6 +158,81 @@ void KinectProjector::setup(bool sdisplayGui)
 	updateStatusGUI();
 }
 
+void KinectProjector::setProjectorDisplayDetected(bool detected)
+{
+	secondScreenFound = detected;
+}
+
+bool KinectProjector::isRequiredHardwareConnected() const
+{
+	return kinectOpened && secondScreenFound;
+}
+
+std::string KinectProjector::getRequiredHardwareStatus() const
+{
+	if (kinectOpened && secondScreenFound) {
+		return "Required hardware connected";
+	}
+
+	std::string status = "Missing required hardware:";
+	if (!kinectOpened) {
+		status += "\n- Kinect depth camera not connected or not available";
+	}
+	if (!secondScreenFound) {
+		status += "\n- Projector/second display not detected";
+	}
+	return status;
+}
+
+void KinectProjector::recheckHardwareConnections()
+{
+	if (!kinectOpened)
+	{
+		kinectOpened = kinectgrabber.openKinect();
+
+		if (kinectOpened)
+		{
+			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): A Kinect was found";
+			kinectRes = kinectgrabber.getKinectSize();
+			kinectROI = ofRectangle(0, 0, kinectRes.x, kinectRes.y);
+			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectROI " << kinectROI;
+
+			kinectgrabber.setupFramefilter(gradFieldResolution, maxOffset, kinectROI, spatialFiltering, followBigChanges, numAveragingSlots);
+			kinectWorldMatrix = kinectgrabber.getWorldMatrix();
+			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectWorldMatrix: " << kinectWorldMatrix;
+		}
+		else
+		{
+			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Kinect still not found";
+		}
+	}
+
+	int monitorCount = 0;
+	GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+	secondScreenFound = monitorCount > 1;
+	if (secondScreenFound && monitors != nullptr)
+	{
+		int xM = 0;
+		int yM = 0;
+		glfwGetMonitorPos(monitors[1], &xM, &yM);
+		const GLFWvidmode* desktopMode = glfwGetVideoMode(monitors[1]);
+		if (desktopMode != nullptr)
+		{
+			projRes = ofVec2f(desktopMode->width, desktopMode->height);
+			projWindow->setWindowPosition(xM, yM);
+			projWindow->setWindowShape(desktopMode->width, desktopMode->height);
+			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Projector display found at "
+											<< desktopMode->width << " x " << desktopMode->height;
+		}
+	}
+	else
+	{
+		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Projector display still not found";
+	}
+
+	updateStatusGUI();
+}
+
 void KinectProjector::exit(ofEventArgs& e)
 {
 	if (ROIcalibrated)
@@ -194,14 +270,40 @@ void KinectProjector::setGradFieldResolution(int sgradFieldResolution){
 // else it would be convenient just to call it in every update
 void KinectProjector::updateStatusGUI()
 {
+	if (!displayGui || StatusGUI == nullptr)
+	{
+		return;
+	}
+
+	if (isRequiredHardwareConnected())
+	{
+		StatusGUI->getLabel("Hardware Status")->setLabel("Required hardware connected");
+		StatusGUI->getLabel("Hardware Status")->setLabelColor(ofColor(0, 255, 0));
+	}
+	else
+	{
+		std::string missingHardware = "Missing hardware: ";
+		if (!kinectOpened) {
+			missingHardware += "Kinect";
+		}
+		if (!secondScreenFound) {
+			if (!kinectOpened) {
+				missingHardware += ", ";
+			}
+			missingHardware += "Projector";
+		}
+		StatusGUI->getLabel("Hardware Status")->setLabel(missingHardware);
+		StatusGUI->getLabel("Hardware Status")->setLabelColor(ofColor(255, 0, 0));
+	}
+
 	if (kinectOpened)
 	{
-		StatusGUI->getLabel("Kinect Status")->setLabel("Kinect running");
+		StatusGUI->getLabel("Kinect Status")->setLabel(kinectgrabber.getCameraName() + " running");
 		StatusGUI->getLabel("Kinect Status")->setLabelColor(ofColor(0, 255, 0));
 	}
 	else
 	{
-		StatusGUI->getLabel("Kinect Status")->setLabel("Kinect not found");
+		StatusGUI->getLabel("Kinect Status")->setLabel(kinectgrabber.getCameraName() + " not found");
 		StatusGUI->getLabel("Kinect Status")->setLabelColor(ofColor(255, 0, 0));
 	}
 
@@ -238,7 +340,16 @@ void KinectProjector::updateStatusGUI()
 		StatusGUI->getLabel("Calibration Status")->setLabelColor(ofColor(255, 0, 0));
 	}
 
-	StatusGUI->getLabel("Projector Status")->setLabel("Projector " + ofToString(projRes.x) + " x " + ofToString(projRes.y));
+	if (secondScreenFound)
+	{
+		StatusGUI->getLabel("Projector Status")->setLabel("Projector " + ofToString(projRes.x) + " x " + ofToString(projRes.y));
+		StatusGUI->getLabel("Projector Status")->setLabelColor(ofColor(0, 255, 0));
+	}
+	else
+	{
+		StatusGUI->getLabel("Projector Status")->setLabel("Projector/second display not found");
+		StatusGUI->getLabel("Projector Status")->setLabelColor(ofColor(255, 0, 0));
+	}
 
 	std::string AppStatus = "Setup";
 	if (applicationState == APPLICATION_STATE_CALIBRATING)
@@ -264,28 +375,6 @@ void KinectProjector::update()
     basePlaneUpdated = false;
 //    ROIUpdated = false;
     projKinectCalibrationUpdated = false;
-
-	// Try to open the kinect every 3. second if it is not yet open
-	float TimeStamp = ofGetElapsedTimef();
-	if (!kinectOpened && TimeStamp-lastKinectOpenTry > 3)
-	{
-		lastKinectOpenTry = TimeStamp;
-		kinectOpened = kinectgrabber.openKinect();
-
-		if (kinectOpened)
-		{
-			ofLogVerbose("KinectProjector") << "KinectProjector.update(): A Kinect was found ";
-			kinectRes = kinectgrabber.getKinectSize();
-			kinectROI = ofRectangle(0, 0, kinectRes.x, kinectRes.y);
-			ofLogVerbose("KinectProjector") << "KinectProjector.update(): kinectROI " << kinectROI;
-
-			kinectgrabber.setupFramefilter(gradFieldResolution, maxOffset, kinectROI, spatialFiltering, followBigChanges, numAveragingSlots);
-			kinectWorldMatrix = kinectgrabber.getWorldMatrix();
-			ofLogVerbose("KinectProjector") << "KinectProjector.update(): kinectWorldMatrix: " << kinectWorldMatrix;
-
-			updateStatusGUI();
-		}
-	}
 
 	if (displayGui)
 	{
@@ -1226,11 +1315,51 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 		fboMainWindow.draw(x, y);
 	}
 
+	if (!isRequiredHardwareConnected())
+	{
+		drawHardwareStatusPanel();
+	}
+
 	if (displayGui)
 	{
 		gui->draw();
 		StatusGUI->draw();
 	}
+}
+
+void KinectProjector::drawHardwareStatusPanel()
+{
+	const float panelX = 24;
+	const float panelY = 24;
+	const float panelW = 520;
+	const float panelH = secondScreenFound ? 170 : 205;
+	const float pad = 18;
+
+	ofPushStyle();
+	ofFill();
+	ofSetColor(20, 20, 20, 220);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+	ofNoFill();
+	ofSetLineWidth(2);
+	ofSetColor(255, 80, 80);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+
+	ofFill();
+	ofSetColor(255);
+	ofDrawBitmapString("Magic Sand Explorer hardware check", panelX + pad, panelY + 28);
+	ofSetColor(255, 120, 120);
+	ofDrawBitmapString(getRequiredHardwareStatus(), panelX + pad, panelY + 58);
+
+	ofSetColor(230);
+	std::string details = "The app is open in setup mode.";
+	if (!kinectOpened) {
+		details += "\nConnect the Kinect, then press Recheck Hardware.";
+	}
+	if (!secondScreenFound) {
+		details += "\nConnect a projector or second display, then press Recheck Hardware.";
+	}
+	ofDrawBitmapString(details, panelX + pad, panelY + 118);
+	ofPopStyle();
 }
 
 void KinectProjector::drawChessboard(int x, int y, int chessboardSize) {
@@ -1413,6 +1542,7 @@ void KinectProjector::setupGui(){
     // instantiate and position the gui //
     gui = new ofxDatGui( ofxDatGuiAnchor::TOP_RIGHT );
 	gui->addButton("RUN!")->setName("Start Application");
+	gui->addButton("Recheck Hardware");
 	gui->addBreak();
     gui->addFRM();
 	fpsKinectText = gui->addTextInput("Kinect FPS", "0");
@@ -1460,6 +1590,7 @@ void KinectProjector::setupGui(){
 	gui->setAutoDraw(false);
 
 	StatusGUI = new ofxDatGui(ofxDatGuiAnchor::BOTTOM_LEFT);
+	StatusGUI->addLabel("Hardware Status");
 	StatusGUI->addLabel("Application Status");
 	StatusGUI->addLabel("Kinect Status");
 	StatusGUI->addLabel("ROI Status");
@@ -1662,6 +1793,10 @@ void KinectProjector::onButtonEvent(ofxDatGuiButtonEvent e){
 	else if (e.target->is("Start Application"))
 	{
 		startApplication();
+	}
+	else if (e.target->is("Recheck Hardware"))
+	{
+		recheckHardwareConnections();
 	}
 	else if (e.target->is("Update ROI from calibration")) {
 		updateROIFromCalibration();
@@ -2156,5 +2291,3 @@ void KinectProjector::SaveKinectColorImage()
 	}
 
 }
-
-

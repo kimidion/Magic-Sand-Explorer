@@ -34,6 +34,7 @@ void ofApp::setup() {
 
 	// Setup kinectProjector
 	kinectProjector = std::make_shared<KinectProjector>(projWindow);
+	kinectProjector->setProjectorDisplayDetected(projectorDisplayDetected);
 	kinectProjector->setup(true);
 	
 	// Setup sandSurfaceRenderer
@@ -251,4 +252,3 @@ void ofApp::gotMessage(ofMessage msg) {
 void ofApp::dragEvent(ofDragInfo dragInfo) {
 
 }
-

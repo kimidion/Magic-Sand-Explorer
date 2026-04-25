@@ -9,5 +9,21 @@ ifndef OF_ROOT
     OF_ROOT=$(realpath ../../..)
 endif
 
+PROJECT_AFTER = $(MAKE) copyprojectdata
+
 # call the project makefile!
 include $(OF_ROOT)/libs/openFrameworksCompiled/project/makefileCommon/compile.project.mk
+
+.PHONY: copyprojectdata
+copyprojectdata:
+	@echo "Copying project data"
+	@mkdir -p bin/data
+	@cp -R data/. bin/data/
+	@mkdir -p bin/Magic-Sand-Explorer_debug.app/Contents/Resources/data
+	@cp -R data/. bin/Magic-Sand-Explorer_debug.app/Contents/Resources/data/
+	@mkdir -p bin/Magic-Sand-Explorer.app/Contents/Resources/data
+	@cp -R data/. bin/Magic-Sand-Explorer.app/Contents/Resources/data/
+
+RunDebug: copyprojectdata
+RunRelease: copyprojectdata
+run: copyprojectdata

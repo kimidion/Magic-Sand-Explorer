@@ -82,6 +82,9 @@ public:
 	void setSpatialFiltering(bool sspatialFiltering);
 	void setInPainting(bool inp);
 	void setFullFrameFiltering(bool ff);	
+	void setProjectorDisplayDetected(bool detected);
+	bool isRequiredHardwareConnected() const;
+	std::string getRequiredHardwareStatus() const;
 	
 	void setFollowBigChanges(bool sfollowBigChanges);
 	void StartManualROIDefinition();
@@ -251,11 +254,12 @@ private:
     
 	void ProcessChessBoardInput(ofxCvGrayscaleImage& image);
 	void CheckAndNormalizeKinectROI();
+	void drawHardwareStatusPanel();
+	void recheckHardwareConnections();
 
     // State variables
     bool secondScreenFound;
 	bool kinectOpened;
-	float lastKinectOpenTry;
 	bool ROIcalibrated;
     bool projKinectCalibrated;
 //    bool ROIUpdated;
@@ -377,5 +381,3 @@ private:
 
 
 #endif /* defined(__GreatSand__KinectProjector__) */
-
-
