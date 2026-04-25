@@ -26,6 +26,21 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 using namespace ofxCSG;
 
+namespace {
+template<typename T>
+T getXmlValue(const ofXml& parent, const std::string& childName)
+{
+	return parent.getChild(childName).getValue<T>();
+}
+
+template<typename T>
+T getXmlValue(const ofXml& parent, const std::string& childName, const T& defaultValue)
+{
+	ofXml child = parent.getChild(childName);
+	return child ? child.getValue<T>() : defaultValue;
+}
+}
+
 KinectProjector::KinectProjector(std::shared_ptr<ofAppBaseWindow> const& p)
 :ROIcalibrated(false),
 projKinectCalibrated(false),
@@ -530,11 +545,11 @@ void KinectProjector::updateROIFromCalibration()
 	ofVec2f b = worldCoordTokinectCoord(projCoordAndWorldZToWorldCoord(projRes.x, 0, basePlaneOffset.z));
 	ofVec2f c = worldCoordTokinectCoord(projCoordAndWorldZToWorldCoord(projRes.x, projRes.y, basePlaneOffset.z));
 	ofVec2f d = worldCoordTokinectCoord(projCoordAndWorldZToWorldCoord(0, projRes.y, basePlaneOffset.z));
-	float x1 = max(a.x, d.x);
-	float x2 = min(b.x, c.x);
-	float y1 = max(a.y, b.y);
-	float y2 = min(c.y, d.y);
-	ofRectangle smallKinectROI = ofRectangle(ofPoint(max(x1, kinectROI.getLeft()), max(y1, kinectROI.getTop())), ofPoint(min(x2, kinectROI.getRight()), min(y2, kinectROI.getBottom())));
+	float x1 = std::max(a.x, d.x);
+	float x2 = std::min(b.x, c.x);
+	float y1 = std::max(a.y, b.y);
+	float y2 = std::min(c.y, d.y);
+	ofRectangle smallKinectROI = ofRectangle(ofPoint(std::max(x1, kinectROI.getLeft()), std::max(y1, kinectROI.getTop())), ofPoint(std::min(x2, kinectROI.getRight()), std::min(y2, kinectROI.getBottom())));
 	kinectROI = smallKinectROI;
 
 	kinectROI.standardize();
@@ -672,8 +687,8 @@ void KinectProjector::updateROIFromFile()
 	ofXml xml;
 	if (xml.load(settingsFile))
 	{
-		xml.setTo("KINECTSETTINGS");
-		kinectROI = xml.getValue<ofRectangle>("kinectROI");
+		ofXml settings = xml.findFirst("//KINECTSETTINGS");
+		kinectROI = getXmlValue<ofRectangle>(settings, "kinectROI");
 		setNewKinectROI();
 		ROICalibState = ROI_CALIBRATION_STATE_DONE;
 		return;
@@ -1854,22 +1869,23 @@ bool KinectProjector::loadSettings(){
     string settingsFile = "settings/kinectProjectorSettings.xml";
     
     ofXml xml;
-    if (!xml.load(settingsFile))
+    if (!xml.load(settingsFile)) {
         return false;
-    xml.setTo("KINECTSETTINGS");
-    kinectROI = xml.getValue<ofRectangle>("kinectROI");
-    basePlaneNormalBack = xml.getValue<ofVec3f>("basePlaneNormalBack");
+    }
+    ofXml settings = xml.findFirst("//KINECTSETTINGS");
+    kinectROI = getXmlValue<ofRectangle>(settings, "kinectROI");
+    basePlaneNormalBack = getXmlValue<ofVec3f>(settings, "basePlaneNormalBack");
     basePlaneNormal = basePlaneNormalBack;
-    basePlaneOffsetBack = xml.getValue<ofVec3f>("basePlaneOffsetBack");
+    basePlaneOffsetBack = getXmlValue<ofVec3f>(settings, "basePlaneOffsetBack");
     basePlaneOffset = basePlaneOffsetBack;
-    basePlaneEq = xml.getValue<ofVec4f>("basePlaneEq");
-    maxOffsetBack = xml.getValue<float>("maxOffsetBack");
+    basePlaneEq = getXmlValue<ofVec4f>(settings, "basePlaneEq");
+    maxOffsetBack = getXmlValue<float>(settings, "maxOffsetBack");
     maxOffset = maxOffsetBack;
-    spatialFiltering = xml.getValue<bool>("spatialFiltering");
-    followBigChanges = xml.getValue<bool>("followBigChanges");
-    numAveragingSlots = xml.getValue<int>("numAveragingSlots");
-	doInpainting = xml.getValue<bool>("OutlierInpainting", false);
-	doFullFrameFiltering = xml.getValue<bool>("FullFrameFiltering", false);
+    spatialFiltering = getXmlValue<bool>(settings, "spatialFiltering");
+    followBigChanges = getXmlValue<bool>(settings, "followBigChanges");
+    numAveragingSlots = getXmlValue<int>(settings, "numAveragingSlots");
+	doInpainting = getXmlValue<bool>(settings, "OutlierInpainting", false);
+	doFullFrameFiltering = getXmlValue<bool>(settings, "FullFrameFiltering", false);
     return true;
 }
 
@@ -1878,19 +1894,17 @@ bool KinectProjector::saveSettings()
     string settingsFile = "settings/kinectProjectorSettings.xml";
 
     ofXml xml;
-    xml.addChild("KINECTSETTINGS");
-    xml.setTo("KINECTSETTINGS");
-    xml.addValue("kinectROI", kinectROI);
-    xml.addValue("basePlaneNormalBack", basePlaneNormalBack);
-    xml.addValue("basePlaneOffsetBack", basePlaneOffsetBack);
-    xml.addValue("basePlaneEq", basePlaneEq);
-    xml.addValue("maxOffsetBack", maxOffsetBack);
-    xml.addValue("spatialFiltering", spatialFiltering);
-    xml.addValue("followBigChanges", followBigChanges);
-    xml.addValue("numAveragingSlots", numAveragingSlots);
-	xml.addValue("OutlierInpainting", doInpainting);
-	xml.addValue("FullFrameFiltering", doFullFrameFiltering);
-	xml.setToParent();
+    ofXml settings = xml.appendChild("KINECTSETTINGS");
+    settings.appendChild("kinectROI").set(kinectROI);
+    settings.appendChild("basePlaneNormalBack").set(basePlaneNormalBack);
+    settings.appendChild("basePlaneOffsetBack").set(basePlaneOffsetBack);
+    settings.appendChild("basePlaneEq").set(basePlaneEq);
+    settings.appendChild("maxOffsetBack").set(maxOffsetBack);
+    settings.appendChild("spatialFiltering").set(spatialFiltering);
+    settings.appendChild("followBigChanges").set(followBigChanges);
+    settings.appendChild("numAveragingSlots").set(numAveragingSlots);
+	settings.appendChild("OutlierInpainting").set(doInpainting);
+	settings.appendChild("FullFrameFiltering").set(doFullFrameFiltering);
     return xml.save(settingsFile);
 }
 
@@ -2142,6 +2156,5 @@ void KinectProjector::SaveKinectColorImage()
 	}
 
 }
-
 
 

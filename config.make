@@ -22,7 +22,7 @@
 # PROJECT SPECIFIC CHECKS
 #   This is a project defined section to create internal makefile flags to 
 #   conditionally enable or disable the addition of various features within 
-#   this makefile.  For instance, if you want to make changes based on whether
+#   this makefile.  For instance, if you want to make changes based on whether 
 #   GTK is installed, one might test that here and create a variable to check. 
 ################################################################################
 # None
@@ -97,45 +97,60 @@
 #   presented to the compiler BEFORE the PROJECT_OPTIMIZATION_CFLAGS below. 
 #
 #		(default) PROJECT_CFLAGS = (blank)
-#
-#   Note: Before adding PROJECT_CFLAGS, note that the PLATFORM_CFLAGS defined in 
-#   your platform specific configuration file will be applied by default and 
-#   further flags here may not be needed.
-#
+# 
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
 # PROJECT_CFLAGS = 
 
 ################################################################################
-# PROJECT OPTIMIZATION CFLAGS
-#   These are lists of CFLAGS that are target-specific.  While any flags could 
-#   be conditionally added, they are usually limited to optimization flags. 
-#   These flags are added BEFORE the PROJECT_CFLAGS.
+# PROJECT CXXFLAGS
+#   This is a list of fully qualified CXXFLAGS required when compiling for this 
+#   project. These flags will be used IN ADDITION TO the PLATFORM_CXXFLAGS 
+#   defined in your platform specific core configuration files. These flags are
+#   presented to the compiler BEFORE the PROJECT_OPTIMIZATION_CFLAGS below. 
 #
-#   PROJECT_OPTIMIZATION_CFLAGS_RELEASE flags are only applied to RELEASE targets.
-#
-#		(default) PROJECT_OPTIMIZATION_CFLAGS_RELEASE = (blank)
-#
-#   PROJECT_OPTIMIZATION_CFLAGS_DEBUG flags are only applied to DEBUG targets.
-#
-#		(default) PROJECT_OPTIMIZATION_CFLAGS_DEBUG = (blank)
-#
-#   Note: Before adding PROJECT_OPTIMIZATION_CFLAGS, please note that the 
-#   PLATFORM_OPTIMIZATION_CFLAGS defined in your platform specific configuration 
-#   file will be applied by default and further optimization flags here may not 
-#   be needed.
+#		(default) PROJECT_CXXFLAGS = (blank)
 #
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_OPTIMIZATION_CFLAGS_RELEASE = 
-# PROJECT_OPTIMIZATION_CFLAGS_DEBUG = 
+# PROJECT_CXXFLAGS = 
 
 ################################################################################
-# PROJECT COMPILERS
-#   Custom compilers can be set for CC and CXX
-#		(default) PROJECT_CXX = (blank)
-#		(default) PROJECT_CC = (blank)
+# PROJECT OPTIMIZATION CFLAGS
+#   These flags will be appended to the end of the CFLAGS command string and 
+#   thus override any previous flags. They should be used carefully, if at all.
+#
+#		(default) PROJECT_OPTIMIZATION_CFLAGS = (blank)
+#
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_CXX = 
-# PROJECT_CC = 
+# PROJECT_OPTIMIZATION_CFLAGS = 
+
+################################################################################
+# ADDONS
+#   Add the libs that need to be compiled. By default of_v0.9.3 will compile 
+#   all addons that are found in the addons folder. If you want to compile a 
+#   subset, specify them here. You can also use the Project Generator to create
+#   a project with specific addons.
+#
+#		(default) PROJECT_ADDONS = (all addons)
+#
+#   Note: Leave a leading space when adding list items with the += operator
+################################################################################
+# PROJECT_ADDONS = 
+
+################################################################################
+# INTERNAL EXCLUSIONS
+#   This is a project defined section to exclude internal addons from 
+#   compilation. This is especially useful if you want to use an external 
+#   version of an addon that is included in the OF distribution.
+#
+#   For instance, if you want to use your own version of ofxOpenCv you can 
+#   add it to the PROJECT_EXTERNAL_SOURCE_PATHS and add ofxOpenCv to the 
+#   PROJECT_INTERNAL_EXCLUSIONS.
+#
+#		(default) PROJECT_INTERNAL_EXCLUSIONS = (none)
+#
+#   Note: Leave a leading space when adding list items with the += operator
+################################################################################
+# PROJECT_INTERNAL_EXCLUSIONS =

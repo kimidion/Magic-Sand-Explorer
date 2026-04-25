@@ -191,7 +191,7 @@ void SandSurfaceRenderer::setupMesh(){
         {
             ofPoint pt = ofPoint(x+kinectROI.x,y+kinectROI.y,0.0f)-ofPoint(0.5,0.5,0); // We move of a half pixel to center the color pixel (more beautiful)
             mesh.addVertex(pt); // make a new vertex
-            mesh.addTexCoord(pt);
+            mesh.addTexCoord(glm::vec2(pt.x, pt.y));
         }
     for(unsigned int y=0;y<meshheight-1;y++)
         for(unsigned int x=0;x<meshwidth-1;x++)
@@ -350,8 +350,8 @@ void SandSurfaceRenderer::updateColorListColor(int i, int j){
     float bt = (kc.getBrightness() < 245) ? kc.getBrightness()+10 : 255;
     kb.setSaturation(st);
     kb.setBrightness(bt);
-    colorList->get(i)->setBackgroundColors(kc, kb, kb);
-    colorList->get(i)->setLabelColor(kc.getInverted());
+    colorList->getItemAtIndex(i)->setBackgroundColors(kc, kb, kb);
+    colorList->getItemAtIndex(i)->setLabelColor(kc.getInverted());
 }
 
 void SandSurfaceRenderer::populateColorList(){
@@ -360,7 +360,7 @@ void SandSurfaceRenderer::populateColorList(){
         int j = heightMap.size()-1-i;
         colorList->add("color");
         updateColorListColor(i, j);
-        colorList->get(i)->setLabel("Height: "+ofToString(heightMap[j].height));
+        colorList->getItemAtIndex(i)->setLabel("Height: "+ofToString(heightMap[j].height));
     }
     //Initiate color controls
     selectedColor = 0;
@@ -370,7 +370,7 @@ void SandSurfaceRenderer::populateColorList(){
     gui3->getSlider("Height")->setValue(heightMap[j].height);
     gui3->getSlider("Height")->setMax(heightMap[j].height+100);
     gui3->getSlider("Height")->setMin(heightMap[j-1].height);
-    colorList->get(0)->setLabelAlignment(ofxDatGuiAlignment::CENTER);
+    colorList->getItemAtIndex(0)->setLabelAlignment(ofxDatGuiAlignment::CENTER);
 }
 
 void SandSurfaceRenderer::onButtonEvent(ofxDatGuiButtonEvent e){
@@ -385,10 +385,10 @@ void SandSurfaceRenderer::onButtonEvent(ofxDatGuiButtonEvent e){
         float newheight = (j > 0) ? (heightMap[j-1].height+heightMap[j].height)/2 : heightMap[j].height+1;
         colorList->add("color");
         updateColorListColor(i, j);
-        colorList->get(i)->setLabel("Height: "+ofToString(newheight));
+        colorList->getItemAtIndex(i)->setLabel("Height: "+ofToString(newheight));
         colorList->move(i,selectedColor+1);
         heightMap.addKey(heightMap[j].color, newheight);
-        onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->get(selectedColor+1), selectedColor+1));
+        onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->getItemAtIndex(selectedColor+1)));
     } else if (e.target->is("Remove color")){
         if (heightMap.size() > 1){
             int j = heightMap.size()-1-selectedColor;
@@ -398,7 +398,7 @@ void SandSurfaceRenderer::onButtonEvent(ofxDatGuiButtonEvent e){
             if (i == heightMap.size())
                 i -= 1;
             selectedColor += 1; // To get i != selectedColor => update
-            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->get(i), i));
+            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->getItemAtIndex(i)));
         }
     } else if (e.target->is("Move up")){
         int i = selectedColor;
@@ -407,7 +407,7 @@ void SandSurfaceRenderer::onButtonEvent(ofxDatGuiButtonEvent e){
             heightMap.swapKeys(j, j+1);
             updateColorListColor(i, j);
             updateColorListColor(i-1, j+1);
-            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->get(i-1), i-1));
+            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->getItemAtIndex(i-1)));
        }
     } else if (e.target->is("Move down")){
         int i = selectedColor;
@@ -416,7 +416,7 @@ void SandSurfaceRenderer::onButtonEvent(ofxDatGuiButtonEvent e){
             heightMap.swapKeys(j, j-1);
             updateColorListColor(i, j);
             updateColorListColor(i+1, j-1);
-            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->get(i+1), i+1));
+            onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->getItemAtIndex(i+1)));
         }
     } else if (e.target->is("Undo")){
         int i = selectedColor;
@@ -452,7 +452,7 @@ void SandSurfaceRenderer::onSliderEvent(ofxDatGuiSliderEvent e){
         int i = selectedColor;
         int j = heightMap.size()-1-i;
         heightMap.setHeightKey(j, e.value);
-        colorList->get(i)->setLabel("Height: "+ofToString(e.value));
+        colorList->getItemAtIndex(i)->setLabel("Height: "+ofToString(e.value));
     }
 }
 
@@ -463,11 +463,11 @@ void SandSurfaceRenderer::onDropdownEvent(ofxDatGuiDropdownEvent e){
 }
 
 void SandSurfaceRenderer::onScrollViewEvent(ofxDatGuiScrollViewEvent e){
-    int i = e.index;
+    int i = e.target->getIndex();
     if (i != selectedColor){
         int j = heightMap.size()-1-i;
         e.target->setLabelAlignment(ofxDatGuiAlignment::CENTER);
-        colorList->get(selectedColor)->setLabelAlignment(ofxDatGuiAlignment::LEFT);
+        colorList->getItemAtIndex(selectedColor)->setLabelAlignment(ofxDatGuiAlignment::LEFT);
 //        gui3->getButton("ColorName")->setLabel("Color #"+ofToString(i+1));
         gui3->getColorPicker("ColorPicker")->setColor(heightMap[j].color);
         undoColor = heightMap[j].color;
@@ -509,12 +509,13 @@ bool SandSurfaceRenderer::loadSettings(){
     string settingsFile = "settings/sandSurfaceRendererSettings.xml";
     
     ofXml xml;
-    if (!xml.load(settingsFile))
+    if (!xml.load(settingsFile)) {
         return false;
-    xml.setTo("SURFACERENDERERSETTINGS");
-    colorMapFile = xml.getValue<string>("colorMapFile");
-    drawContourLines = xml.getValue<bool>("drawContourLines");
-    contourLineDistance = xml.getValue<float>("contourLineDistance");
+    }
+    ofXml settings = xml.findFirst("//SURFACERENDERERSETTINGS");
+    colorMapFile = settings.getChild("colorMapFile").getValue();
+    drawContourLines = settings.getChild("drawContourLines").getBoolValue();
+    contourLineDistance = settings.getChild("contourLineDistance").getFloatValue();
     
     return true;
 }
@@ -523,13 +524,10 @@ bool SandSurfaceRenderer::saveSettings(){
     string settingsFile = "settings/sandSurfaceRendererSettings.xml";
 
     ofXml xml;
-    xml.addChild("SURFACERENDERERSETTINGS");
-    xml.setTo("SURFACERENDERERSETTINGS");
-    xml.addValue("colorMapFile", colorMapFile);
-    xml.addValue("drawContourLines", drawContourLines);
-    xml.addValue("contourLineDistance", contourLineDistance);
-    xml.setToParent();
+    ofXml settings = xml.appendChild("SURFACERENDERERSETTINGS");
+    settings.appendChild("colorMapFile").set(colorMapFile);
+    settings.appendChild("drawContourLines").set(drawContourLines);
+    settings.appendChild("contourLineDistance").set(contourLineDistance);
     return xml.save(settingsFile);
 }
-
 

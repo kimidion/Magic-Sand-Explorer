@@ -100,16 +100,16 @@ vector<double> ofxKinectProjectorToolkit::getCalibration()
 
 bool ofxKinectProjectorToolkit::loadCalibration(string path){
     ofXml xml;
-    if (!xml.load(path))
+    if (!xml.load(path)) {
         return false;
-	xml.setTo("RESOLUTIONS");
-	ofVec2f sprojRes = xml.getValue<ofVec2f>("PROJECTOR");
-	ofVec2f skinectRes = xml.getValue<ofVec2f>("KINECT");
+    }
+	ofVec2f sprojRes = xml.findFirst("//CALIBRATION/RESOLUTIONS/PROJECTOR").getValue<ofVec2f>();
+	ofVec2f skinectRes = xml.findFirst("//CALIBRATION/RESOLUTIONS/KINECT").getValue<ofVec2f>();
 	if (sprojRes!=projRes || skinectRes!=kinectRes)
 		return false;
-    xml.setTo("//CALIBRATION/COEFFICIENTS");
+    ofXml coefficients = xml.findFirst("//CALIBRATION/COEFFICIENTS");
     for (int i=0; i<11; i++) {
-        x(i, 0) = xml.getValue<float>("COEFF"+ofToString(i));
+        x(i, 0) = coefficients.getChild("COEFF"+ofToString(i)).getFloatValue();
     }
     projMatrice = ofMatrix4x4(x(0,0), x(1,0), x(2,0), x(3,0),
                               x(4,0), x(5,0), x(6,0), x(7,0),
@@ -121,22 +121,14 @@ bool ofxKinectProjectorToolkit::loadCalibration(string path){
 
 bool ofxKinectProjectorToolkit::saveCalibration(string path){
     ofXml xml;
-	xml.addChild("CALIBRATION");
-	xml.setTo("//CALIBRATION");
-	xml.addChild("RESOLUTIONS");
-	xml.setTo("RESOLUTIONS");
-	xml.addValue("PROJECTOR", projRes);
-	xml.addValue("KINECT", kinectRes);
-	xml.setTo("//CALIBRATION");
-	xml.addChild("COEFFICIENTS");
-	xml.setTo("COEFFICIENTS");
+	ofXml calibration = xml.appendChild("CALIBRATION");
+	ofXml resolutions = calibration.appendChild("RESOLUTIONS");
+	resolutions.appendChild("PROJECTOR").set(projRes);
+	resolutions.appendChild("KINECT").set(kinectRes);
+	ofXml coefficients = calibration.appendChild("COEFFICIENTS");
 	for (int i=0; i<11; i++) {
-        ofXml coeff;
-        coeff.addValue("COEFF"+ofToString(i), x(i, 0));
-        xml.addXml(coeff);
+        coefficients.appendChild("COEFF"+ofToString(i)).set(x(i, 0));
     }
-    xml.setToParent();
     return xml.save(path);
 }
-
 

@@ -462,10 +462,10 @@ float KinectGrabber::findInpaintValue(float *data, int x, int y)
 	int sideLength = 5;
 
 	// We do not search outside ROI
-	int tminx = max(minX, x - sideLength);
-	int tmaxx = min(maxX, x + sideLength);
-	int tminy = max(minY, y - sideLength);
-	int tmaxy = min(maxY, y + sideLength);
+	int tminx = std::max(minX, x - sideLength);
+	int tmaxx = std::min(maxX, x + sideLength);
+	int tminy = std::max(minY, y - sideLength);
+	int tmaxy = std::min(maxY, y + sideLength);
 
 	int samples = 0;
 	double sumval = 0;
@@ -518,9 +518,9 @@ void KinectGrabber::applySimpleOutlierInpainting()
 	setToLocalAvg = 0;
 	setToGlobalAvg = 0;
 	// Filter ROI
-	for (unsigned int y = max(0, minY-2); y < min((int)height, maxY+2); y++)
+	for (unsigned int y = std::max(0, minY-2); y < std::min((int)height, maxY+2); y++)
 	{
-		for (unsigned int x = max(0, minX-2); x < min((int)width, maxX+2); x++)
+		for (unsigned int x = std::max(0, minX-2); x < std::min((int)width, maxX+2); x++)
 		{
 	//for (unsigned int y = minY; y < maxY; y++)
 	//{
@@ -569,10 +569,10 @@ void KinectGrabber::setKinectROI(ofRectangle ROI){
 		minY = static_cast<int>(ROI.getMinY()) - 2;
 		maxY = static_cast<int>(ROI.getMaxY()) + 2;
 		
-		minX = max(0, minX);
-		maxX = min(maxX, (int)width);
-		minY = max(0, minY);
-		maxY = min(maxY, (int)height);
+		minX = std::max(0, minX);
+		maxX = std::min(maxX, (int)width);
+		minY = std::max(0, minY);
+		maxY = std::min(maxY, (int)height);
 	}
     //ROIwidth = maxX-minX;
     //ROIheight = maxY-minY;
