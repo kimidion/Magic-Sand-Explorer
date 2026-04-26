@@ -25,7 +25,6 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "ofxDatGui.h"
 #include "KinectProjector/KinectProjector.h"
 #include "SandSurfaceRenderer/SandSurfaceRenderer.h"
-#include "Games/MapGameController.h"
 #include "Games/BoidGameController.h"
 
 class ofApp : public ofBaseApp {
@@ -54,11 +53,16 @@ public:
 	bool projectorDisplayDetected = false;
 
 private:
+	void updateMainWindowLayout();
+	void drawMainWindowChrome() const;
+	ofVec2f windowToKinectPreview(float x, float y) const;
+
 	std::shared_ptr<KinectProjector> kinectProjector;
 	SandSurfaceRenderer* sandSurfaceRenderer;
-	CMapGameController mapGameController;
 	CBoidGameController boidGameController;
 
 	// Main window ROI 
 	ofRectangle mainWindowROI;
+	ofRectangle previewSectionROI;
+	ofRectangle controlsSectionROI;
 };

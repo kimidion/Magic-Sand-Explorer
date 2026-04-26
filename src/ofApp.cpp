@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***********************************************************************/
 
 #include "ofApp.h"
+#include <algorithm>
 
 void ofApp::setup() {
 	// OF basics
@@ -44,44 +45,35 @@ void ofApp::setup() {
 	// Retrieve variables
 	ofVec2f kinectRes = kinectProjector->getKinectRes();
 	ofVec2f projRes = ofVec2f(projWindow->getWidth(), projWindow->getHeight());
-	ofRectangle kinectROI = kinectProjector->getKinectROI();
-	////mainWindowROI = ofRectangle(600, 30, 600, 450);
-	//mainWindowROI = ofRectangle(0, 0, 640, 480);
-	mainWindowROI = ofRectangle((ofGetWindowWidth()-kinectRes.x)/2, (ofGetWindowHeight()-kinectRes.y)/2, kinectRes.x, kinectRes.y);
-
-	mapGameController.setup(kinectProjector);
-	mapGameController.setProjectorRes(projRes);
-	mapGameController.setKinectRes(kinectRes);
-	mapGameController.setKinectROI(kinectROI);
+	updateMainWindowLayout();
 
 	boidGameController.setup(kinectProjector);
 	boidGameController.setProjectorRes(projRes);
 	boidGameController.setKinectRes(kinectRes);
+	ofRectangle kinectROI = kinectProjector->getKinectROI();
 	boidGameController.setKinectROI(kinectROI);
 
 }
 
 
 void ofApp::update() {
+	updateMainWindowLayout();
+
     // Call kinectProjector->update() first during the update function()
 	kinectProjector->update();
    	sandSurfaceRenderer->update();
     
-    //if (kinectProjector->isROIUpdated())
-	if (kinectProjector->getKinectROI() != mapGameController.getKinectROI())
-	{
-		ofRectangle kinectROI = kinectProjector->getKinectROI();
-		mapGameController.setKinectROI(kinectROI);
-		boidGameController.setKinectROI(kinectROI);
-	}
+	ofRectangle kinectROI = kinectProjector->getKinectROI();
+	boidGameController.setKinectROI(kinectROI);
 
-	mapGameController.update();
 	boidGameController.update();
 }
 
 
 void ofApp::draw() 
 {
+	drawMainWindowChrome();
+
 	float x = mainWindowROI.x;
 	float y = mainWindowROI.y;
 	float w = mainWindowROI.width;
@@ -101,7 +93,6 @@ void ofApp::drawProjWindow(ofEventArgs &args)
 	if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 	{
 		sandSurfaceRenderer->drawProjectorWindow();
-		mapGameController.drawProjectorWindow();
 		boidGameController.drawProjectorWindow();
 	}
 	kinectProjector->drawProjectorWindow();
@@ -119,20 +110,7 @@ void ofApp::keyPressed(int key)
 	}
 	else if (key == ' ')
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && 
-			boidGameController.isIdle()) // do not start map game if boidgame is not idle
-		{
-			if (mapGameController.isIdle())
-			{
-				mapGameController.setDebug(kinectProjector->getDumpDebugFiles());
-				mapGameController.StartGame();
-			}
-			else
-			{
-				mapGameController.ButtonPressed();
-			}
-		}
-		else if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_SETUP)
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_SETUP)
 		{
 			// Try to start the application
 			kinectProjector->startApplication();
@@ -142,20 +120,13 @@ void ofApp::keyPressed(int key)
 	{
 		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
-			if (mapGameController.isIdle())
-			{
-				boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
-				boidGameController.StartGame(2);
-			}
-			else 
-			{
-				mapGameController.EndButtonPressed();
-			}
+			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
+			boidGameController.StartGame(2);
 		}
 	}
 	else if (key == '1') // Absolute beginner
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && mapGameController.isIdle())
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
 			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
 			boidGameController.StartGame(0);
@@ -163,7 +134,7 @@ void ofApp::keyPressed(int key)
 	}
 	else if (key == '2') 
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && mapGameController.isIdle())
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
 			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
 			boidGameController.StartGame(1);
@@ -171,7 +142,7 @@ void ofApp::keyPressed(int key)
 	}
 	else if (key == '3')
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && mapGameController.isIdle())
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
 			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
 			boidGameController.StartGame(2);
@@ -179,7 +150,7 @@ void ofApp::keyPressed(int key)
 	}
 	else if (key == '4')
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && mapGameController.isIdle())
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
 			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
 			boidGameController.StartGame(3);
@@ -187,21 +158,11 @@ void ofApp::keyPressed(int key)
 	}
 	else if (key == 'm')
 	{
-		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING && mapGameController.isIdle())
+		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 		{
 			boidGameController.setDebug(kinectProjector->getDumpDebugFiles());
 			boidGameController.StartSeekMotherGame();
 		}
-	}
-	else if (key == 't')
-	{
-		mapGameController.setDebug(kinectProjector->getDumpDebugFiles());
-		mapGameController.RealTimeTestMe();
-	}
-	else if (key == 'w')
-	{
-		mapGameController.setDebug(kinectProjector->getDumpDebugFiles());
-		mapGameController.DebugTestMe();
 	}
 }
 
@@ -216,20 +177,23 @@ void ofApp::mouseMoved(int x, int y) {
 void ofApp::mouseDragged(int x, int y, int button) {
 
 	// We assume that we only use this during ROI annotation
-	kinectProjector->mouseDragged(x - mainWindowROI.x, y - mainWindowROI.y, button);
+	ofVec2f previewPoint = windowToKinectPreview(x, y);
+	kinectProjector->mouseDragged(previewPoint.x, previewPoint.y, button);
 }
 
 void ofApp::mousePressed(int x, int y, int button) 
 {
 	if (mainWindowROI.inside((float)x, (float)y))
 	{
-		kinectProjector->mousePressed(x-mainWindowROI.x, y-mainWindowROI.y, button);
+		ofVec2f previewPoint = windowToKinectPreview(x, y);
+		kinectProjector->mousePressed(previewPoint.x, previewPoint.y, button);
 	}
 }
 
 void ofApp::mouseReleased(int x, int y, int button) {
 	// We assume that we only use this during ROI annotation
-	kinectProjector->mouseReleased(x - mainWindowROI.x, y - mainWindowROI.y, button);
+	ofVec2f previewPoint = windowToKinectPreview(x, y);
+	kinectProjector->mouseReleased(previewPoint.x, previewPoint.y, button);
 
 }
 
@@ -242,6 +206,7 @@ void ofApp::mouseExited(int x, int y) {
 }
 
 void ofApp::windowResized(int w, int h) {
+	updateMainWindowLayout();
 
 }
 
@@ -251,4 +216,103 @@ void ofApp::gotMessage(ofMessage msg) {
 
 void ofApp::dragEvent(ofDragInfo dragInfo) {
 
+}
+
+void ofApp::updateMainWindowLayout()
+{
+	if (!kinectProjector)
+	{
+		return;
+	}
+
+	ofVec2f kinectRes = kinectProjector->getKinectRes();
+	if (kinectRes.x <= 0 || kinectRes.y <= 0)
+	{
+		return;
+	}
+
+	const float margin = ofClamp(ofGetWidth() * 0.025f, 16.0f, 32.0f);
+	const float sectionGap = ofClamp(ofGetWidth() * 0.018f, 14.0f, 24.0f);
+	const float innerPad = ofClamp(ofGetWidth() * 0.014f, 12.0f, 20.0f);
+	const float guiReserve = ofClamp(ofGetWidth() * 0.34f, 380.0f, 560.0f);
+	const bool twoColumn = ofGetWidth() >= 980;
+
+	if (twoColumn)
+	{
+		previewSectionROI.set(
+			margin,
+			margin,
+			ofGetWidth() - guiReserve - margin * 2.0f - sectionGap,
+			ofGetHeight() - margin * 2.0f);
+		controlsSectionROI.set(
+			previewSectionROI.getMaxX() + sectionGap,
+			margin,
+			ofGetWidth() - previewSectionROI.getMaxX() - sectionGap - margin,
+			previewSectionROI.height);
+	}
+	else
+	{
+		const float previewMaxH = std::max(180.0f, ofGetHeight() - 220.0f);
+		const float previewH = ofClamp(ofGetHeight() * 0.54f, 180.0f, previewMaxH);
+		previewSectionROI.set(margin, margin, ofGetWidth() - margin * 2.0f, previewH);
+		controlsSectionROI.set(
+			margin,
+			previewSectionROI.getMaxY() + sectionGap,
+			previewSectionROI.width,
+			ofGetHeight() - previewSectionROI.getMaxY() - sectionGap - margin);
+	}
+
+	float availableX = previewSectionROI.x + innerPad;
+	float availableY = previewSectionROI.y + innerPad;
+	float availableW = previewSectionROI.width - innerPad * 2.0f;
+	float availableH = previewSectionROI.height - innerPad * 2.0f;
+
+	availableW = std::max(160.0f, availableW);
+	availableH = std::max(140.0f, availableH);
+
+	const float scale = std::min(availableW / kinectRes.x, availableH / kinectRes.y);
+	const float previewW = kinectRes.x * scale;
+	const float previewH = kinectRes.y * scale;
+
+	mainWindowROI.set(
+		availableX + (availableW - previewW) * 0.5f,
+		availableY + (availableH - previewH) * 0.5f,
+		previewW,
+		previewH);
+}
+
+void ofApp::drawMainWindowChrome() const
+{
+	ofPushStyle();
+	ofBackground(16, 18, 20);
+	ofFill();
+	ofSetColor(28, 31, 34);
+	ofDrawRectangle(previewSectionROI);
+	ofSetColor(24, 27, 30);
+	ofDrawRectangle(controlsSectionROI);
+
+	ofNoFill();
+	ofSetLineWidth(2);
+	ofSetColor(70, 78, 84);
+	ofDrawRectangle(previewSectionROI);
+	ofDrawRectangle(controlsSectionROI);
+
+	ofNoFill();
+	ofSetLineWidth(2);
+	ofSetColor(92, 106, 118);
+	ofDrawRectangle(mainWindowROI);
+	ofPopStyle();
+}
+
+ofVec2f ofApp::windowToKinectPreview(float x, float y) const
+{
+	ofVec2f kinectRes = kinectProjector ? kinectProjector->getKinectRes() : ofVec2f(0, 0);
+	if (mainWindowROI.width <= 0 || mainWindowROI.height <= 0 || kinectRes.x <= 0 || kinectRes.y <= 0)
+	{
+		return ofVec2f(0, 0);
+	}
+
+	return ofVec2f(
+		ofMap(x, mainWindowROI.x, mainWindowROI.getMaxX(), 0, kinectRes.x, true),
+		ofMap(y, mainWindowROI.y, mainWindowROI.getMaxY(), 0, kinectRes.y, true));
 }

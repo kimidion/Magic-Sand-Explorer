@@ -261,15 +261,17 @@ void KinectGrabber::threadedFunction() {
             filteredframe.setImageType(OF_IMAGE_GRAYSCALE);
             updateGradientField();
 			kinectColorImage.setFromPixels(camera->getColorPixels());
-        }
-        if (storedframes == 0)
-        {
-            filtered.send(std::move(filteredframe));
-			gradient.send(std::move(gradField));
-            colored.send(std::move(kinectColorImage.getPixels()));
-            lock();
-            storedframes += 1;
-            unlock();
+
+			if (storedframes == 0)
+			{
+				ofPixels colorPixels = kinectColorImage.getPixels();
+				filtered.send(std::move(filteredframe));
+				gradient.send(std::move(gradField));
+				colored.send(std::move(colorPixels));
+				lock();
+				storedframes += 1;
+				unlock();
+			}
         }
         
     }

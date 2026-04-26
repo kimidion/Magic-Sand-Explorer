@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #define __GreatSand__KinectProjector__
 
 #include <iostream>
+#include <memory>
 #include "ofMain.h"
 #include "ofxOpenCv.h"
 #include "ofxCv.h"
@@ -83,6 +84,8 @@ public:
 	void setInPainting(bool inp);
 	void setFullFrameFiltering(bool ff);	
 	void setProjectorDisplayDetected(bool detected);
+	void refreshProjectorDisplayOptions();
+	void selectProjectorDisplay(int optionIndex);
 	bool isRequiredHardwareConnected() const;
 	std::string getRequiredHardwareStatus() const;
 	
@@ -93,10 +96,12 @@ public:
 
     // Gui and event functions
     void setupGui();
+	void updateGuiLayout();
     void onButtonEvent(ofxDatGuiButtonEvent e);
 
 	void onToggleEvent(ofxDatGuiToggleEvent e);
     void onSliderEvent(ofxDatGuiSliderEvent e);
+	void onDropdownEvent(ofxDatGuiDropdownEvent e);
     void onConfirmModalEvent(ofxModalEvent e);
     void onCalibModalEvent(ofxModalEvent e);
 
@@ -256,6 +261,7 @@ private:
 	void CheckAndNormalizeKinectROI();
 	void drawHardwareStatusPanel();
 	void recheckHardwareConnections();
+	void onMouseScrolled(ofMouseEventArgs& e);
 
     // State variables
     bool secondScreenFound;
@@ -290,6 +296,8 @@ private:
     //kinect buffer
     ofxCvFloatImage             FilteredDepthImage;
     ofxCvColorImage             kinectColorImage;
+	bool                        hasKinectDepthFrame = false;
+	bool                        hasKinectColorFrame = false;
     ofVec2f*                    gradField;
 	ofFpsCounter                fpsKinect;
 	ofxDatGuiTextInput*         fpsKinectText;
@@ -369,6 +377,15 @@ private:
     shared_ptr<ofxModalThemeProjKinect>   modalTheme;
     ofxDatGui* gui;
 	ofxDatGui* StatusGUI;
+	std::unique_ptr<ofxDatGuiTheme> guiTheme;
+	int guiThemeFontSize = 0;
+	int guiLayoutWidth = 0;
+	int guiLayoutHeight = 0;
+	float controlsScrollY = 0.0f;
+	float controlsMaxScrollY = 0.0f;
+	ofRectangle controlsViewportROI;
+	std::vector<int> projectorDisplayIndices;
+	int selectedProjectorDisplayIndex = -1;
 	std::string calibrationText;
 	
 	// Debug functions

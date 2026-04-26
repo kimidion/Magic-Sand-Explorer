@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 #include "KinectProjector.h"
 #include "GLFW/glfw3.h"
+#include <algorithm>
+#include <cmath>
 #include <sstream>
 
 using namespace ofxCSG;
@@ -39,6 +41,32 @@ T getXmlValue(const ofXml& parent, const std::string& childName, const T& defaul
 {
 	ofXml child = parent.getChild(childName);
 	return child ? child.getValue<T>() : defaultValue;
+}
+
+std::unique_ptr<ofxDatGuiTheme> makeResponsiveGuiTheme(int fontSize)
+{
+	auto theme = std::make_unique<ofxDatGuiTheme>();
+	theme->font.size = fontSize;
+	theme->layout.height = std::max(30.0f, fontSize * 3.0f);
+	theme->layout.padding = std::max(3.0f, fontSize * 0.35f);
+	theme->layout.vMargin = std::max(2.0f, fontSize * 0.18f);
+	theme->layout.iconSize = std::max(10.0f, fontSize * 1.1f);
+	theme->layout.labelMargin = std::max(8.0f, fontSize * 0.8f);
+	theme->layout.breakHeight = std::max(6.0f, fontSize * 0.55f);
+	theme->layout.textInput.highlightPadding = std::max(6, static_cast<int>(fontSize * 0.75f));
+	theme->stripe.width = std::max(4, static_cast<int>(fontSize * 0.35f));
+	theme->init();
+	return theme;
+}
+
+std::string truncateForPanel(const std::string& text, int panelWidth, float widthScale = 0.62f)
+{
+	const int maxChars = std::max(8, static_cast<int>(panelWidth * widthScale / 8.0f));
+	if (static_cast<int>(text.size()) <= maxChars)
+	{
+		return text;
+	}
+	return text.substr(0, std::max(0, maxChars - 3)) + "...";
 }
 }
 
@@ -83,6 +111,10 @@ void KinectProjector::setup(bool sdisplayGui)
     calibModal->setButtonLabel("Cancel");
         
 	displayGui = sdisplayGui;
+	if (displayGui)
+	{
+		ofAddListener(ofEvents().mouseScrolled, this, &KinectProjector::onMouseScrolled, OF_EVENT_ORDER_BEFORE_APP);
+	}
 
     // calibration chessboard config
 	chessboardSize = 300;
@@ -161,6 +193,7 @@ void KinectProjector::setup(bool sdisplayGui)
 void KinectProjector::setProjectorDisplayDetected(bool detected)
 {
 	secondScreenFound = detected;
+	selectedProjectorDisplayIndex = detected ? 1 : -1;
 }
 
 bool KinectProjector::isRequiredHardwareConnected() const
@@ -207,34 +240,134 @@ void KinectProjector::recheckHardwareConnections()
 		}
 	}
 
+	refreshProjectorDisplayOptions();
+
+	updateStatusGUI();
+}
+
+void KinectProjector::refreshProjectorDisplayOptions()
+{
+	projectorDisplayIndices.clear();
+	std::vector<std::string> displayLabels;
+
 	int monitorCount = 0;
 	GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
-	secondScreenFound = monitorCount > 1;
-	if (secondScreenFound && monitors != nullptr)
+	if (monitors != nullptr)
 	{
-		int xM = 0;
-		int yM = 0;
-		glfwGetMonitorPos(monitors[1], &xM, &yM);
-		const GLFWvidmode* desktopMode = glfwGetVideoMode(monitors[1]);
-		if (desktopMode != nullptr)
+		for (int i = 1; i < monitorCount; ++i)
 		{
-			projRes = ofVec2f(desktopMode->width, desktopMode->height);
-			projWindow->setWindowPosition(xM, yM);
-			projWindow->setWindowShape(desktopMode->width, desktopMode->height);
-			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Projector display found at "
-											<< desktopMode->width << " x " << desktopMode->height;
+			const GLFWvidmode* desktopMode = glfwGetVideoMode(monitors[i]);
+			if (desktopMode != nullptr)
+			{
+				projectorDisplayIndices.push_back(i);
+				displayLabels.push_back(
+					"Display " + ofToString(i) + ": " +
+					ofToString(desktopMode->width) + "x" + ofToString(desktopMode->height));
+			}
 		}
 	}
-	else
+
+	if (displayLabels.empty())
 	{
-		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Projector display still not found";
+		displayLabels.push_back("No projector display found");
+		selectedProjectorDisplayIndex = -1;
+		secondScreenFound = false;
+	}
+	else if (std::find(projectorDisplayIndices.begin(), projectorDisplayIndices.end(), selectedProjectorDisplayIndex) == projectorDisplayIndices.end())
+	{
+		selectedProjectorDisplayIndex = projectorDisplayIndices.front();
 	}
 
+	if (displayGui && gui != nullptr)
+	{
+		auto displayDropdown = gui->getDropdown("Projector Display");
+		if (displayDropdown != nullptr)
+		{
+			displayDropdown->setOptions(displayLabels);
+			auto selectedIt = std::find(projectorDisplayIndices.begin(), projectorDisplayIndices.end(), selectedProjectorDisplayIndex);
+			if (selectedIt != projectorDisplayIndices.end())
+			{
+				displayDropdown->select(static_cast<int>(selectedIt - projectorDisplayIndices.begin()));
+			}
+		}
+	}
+
+	if (selectedProjectorDisplayIndex >= 0)
+	{
+		auto selectedIt = std::find(projectorDisplayIndices.begin(), projectorDisplayIndices.end(), selectedProjectorDisplayIndex);
+		if (selectedIt != projectorDisplayIndices.end())
+		{
+			selectProjectorDisplay(static_cast<int>(selectedIt - projectorDisplayIndices.begin()));
+		}
+	}
+}
+
+void KinectProjector::selectProjectorDisplay(int optionIndex)
+{
+	if (optionIndex < 0 || optionIndex >= projectorDisplayIndices.size())
+	{
+		secondScreenFound = false;
+		updateStatusGUI();
+		return;
+	}
+
+	int monitorCount = 0;
+	GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+	const int monitorIndex = projectorDisplayIndices[optionIndex];
+	if (monitors == nullptr || monitorIndex < 0 || monitorIndex >= monitorCount)
+	{
+		secondScreenFound = false;
+		updateStatusGUI();
+		return;
+	}
+
+	const GLFWvidmode* desktopMode = glfwGetVideoMode(monitors[monitorIndex]);
+	if (desktopMode == nullptr)
+	{
+		secondScreenFound = false;
+		updateStatusGUI();
+		return;
+	}
+
+	int xM = 0;
+	int yM = 0;
+	glfwGetMonitorPos(monitors[monitorIndex], &xM, &yM);
+	const ofVec2f previousProjRes = projRes;
+	selectedProjectorDisplayIndex = monitorIndex;
+	secondScreenFound = true;
+	projRes = ofVec2f(desktopMode->width, desktopMode->height);
+	projWindow->setWindowPosition(xM, yM);
+	projWindow->setWindowShape(desktopMode->width, desktopMode->height);
+
+	if (fboProjWindow.isAllocated() &&
+		(fboProjWindow.getWidth() != projRes.x || fboProjWindow.getHeight() != projRes.y))
+	{
+		fboProjWindow.allocate(projRes.x, projRes.y, GL_RGBA);
+		fboProjWindow.begin();
+		ofClear(255, 255, 255, 0);
+		fboProjWindow.end();
+	}
+	if (previousProjRes != projRes && kpt != nullptr)
+	{
+		delete kpt;
+		kpt = new ofxKinectProjectorToolkit(projRes, kinectRes);
+		projKinectCalibrated = false;
+		projKinectCalibrationUpdated = false;
+		calibrationText = "Projector changed; recalibrate projector";
+	}
+
+	ofLogVerbose("KinectProjector") << "Selected projector display " << monitorIndex
+									<< " at " << desktopMode->width << " x " << desktopMode->height;
 	updateStatusGUI();
 }
 
 void KinectProjector::exit(ofEventArgs& e)
 {
+	if (displayGui)
+	{
+		ofRemoveListener(ofEvents().mouseScrolled, this, &KinectProjector::onMouseScrolled, OF_EVENT_ORDER_BEFORE_APP);
+	}
+
 	if (ROIcalibrated)
 	{
 		if (saveSettings())
@@ -277,7 +410,7 @@ void KinectProjector::updateStatusGUI()
 
 	if (isRequiredHardwareConnected())
 	{
-		StatusGUI->getLabel("Hardware Status")->setLabel("Required hardware connected");
+		StatusGUI->getLabel("Hardware Status")->setLabel("Hardware connected");
 		StatusGUI->getLabel("Hardware Status")->setLabelColor(ofColor(0, 255, 0));
 	}
 	else
@@ -298,12 +431,12 @@ void KinectProjector::updateStatusGUI()
 
 	if (kinectOpened)
 	{
-		StatusGUI->getLabel("Kinect Status")->setLabel(kinectgrabber.getCameraName() + " running");
+		StatusGUI->getLabel("Kinect Status")->setLabel(truncateForPanel(kinectgrabber.getCameraName() + " running", guiLayoutWidth));
 		StatusGUI->getLabel("Kinect Status")->setLabelColor(ofColor(0, 255, 0));
 	}
 	else
 	{
-		StatusGUI->getLabel("Kinect Status")->setLabel(kinectgrabber.getCameraName() + " not found");
+		StatusGUI->getLabel("Kinect Status")->setLabel(truncateForPanel(kinectgrabber.getCameraName() + " not found", guiLayoutWidth));
 		StatusGUI->getLabel("Kinect Status")->setLabelColor(ofColor(255, 0, 0));
 	}
 
@@ -331,23 +464,23 @@ void KinectProjector::updateStatusGUI()
 
 	if (projKinectCalibrated)
 	{
-		StatusGUI->getLabel("Calibration Status")->setLabel("Projector/Kinect calibrated");
+		StatusGUI->getLabel("Calibration Status")->setLabel("Projector calibrated");
 		StatusGUI->getLabel("Calibration Status")->setLabelColor(ofColor(0, 255, 0));
 	}
 	else
 	{
-		StatusGUI->getLabel("Calibration Status")->setLabel("Projector/Kinect not calibrated");
+		StatusGUI->getLabel("Calibration Status")->setLabel("Projector not calibrated");
 		StatusGUI->getLabel("Calibration Status")->setLabelColor(ofColor(255, 0, 0));
 	}
 
 	if (secondScreenFound)
 	{
-		StatusGUI->getLabel("Projector Status")->setLabel("Projector " + ofToString(projRes.x) + " x " + ofToString(projRes.y));
+		StatusGUI->getLabel("Projector Status")->setLabel("Projector " + ofToString(static_cast<int>(projRes.x)) + "x" + ofToString(static_cast<int>(projRes.y)));
 		StatusGUI->getLabel("Projector Status")->setLabelColor(ofColor(0, 255, 0));
 	}
 	else
 	{
-		StatusGUI->getLabel("Projector Status")->setLabel("Projector/second display not found");
+		StatusGUI->getLabel("Projector Status")->setLabel("Projector not found");
 		StatusGUI->getLabel("Projector Status")->setLabelColor(ofColor(255, 0, 0));
 	}
 
@@ -357,10 +490,10 @@ void KinectProjector::updateStatusGUI()
 	else if (applicationState == APPLICATION_STATE_RUNNING)
 		AppStatus = "Running";
 
-	StatusGUI->getLabel("Application Status")->setLabel("Application state: " + AppStatus);
+	StatusGUI->getLabel("Application Status")->setLabel("State: " + AppStatus);
 	StatusGUI->getLabel("Application Status")->setLabelColor(ofColor(255, 255, 0));
 
-	StatusGUI->getLabel("Calibration Step")->setLabel("Calibration Step: " + calibrationText);;
+	StatusGUI->getLabel("Calibration Step")->setLabel(truncateForPanel("Step: " + calibrationText, guiLayoutWidth));
 	StatusGUI->getLabel("Calibration Step")->setLabelColor(ofColor(0, 255, 255));
 
 	gui->getToggle("Spatial filtering")->setChecked(spatialFiltering);
@@ -378,62 +511,98 @@ void KinectProjector::update()
 
 	if (displayGui)
 	{
+		updateGuiLayout();
 		gui->update();
 		StatusGUI->update();
 	}
 
     // Get images from kinect grabber
+	bool receivedFilteredFrame = false;
     ofFloatPixels filteredframe;
-    if (kinectOpened && kinectgrabber.filtered.tryReceive(filteredframe)) 
+    if (kinectOpened && kinectgrabber.filtered.tryReceive(filteredframe))
 	{
+		receivedFilteredFrame = true;
 		fpsKinect.newFrame();
 		fpsKinectText->setText(ofToString(fpsKinect.getFps(), 2));
 
 		FilteredDepthImage.setFromPixels(filteredframe.getData(), kinectRes.x, kinectRes.y);
         FilteredDepthImage.updateTexture();
-        
-        // Get color image from kinect grabber
-        ofPixels coloredframe;
-        if (kinectgrabber.colored.tryReceive(coloredframe)) 
-		{
-            kinectColorImage.setFromPixels(coloredframe);
-		
-			if (TemporalFilteringType == 0)
-				TemporalFrameFilter.NewFrame(kinectColorImage.getPixels().getData(), kinectColorImage.width, kinectColorImage.height);
-			else if (TemporalFilteringType == 1)
-				TemporalFrameFilter.NewColFrame(kinectColorImage.getPixels().getData(), kinectColorImage.width, kinectColorImage.height);
-		}
+		hasKinectDepthFrame = true;
+	}
 
-        // Get gradient field from kinect grabber
-        kinectgrabber.gradient.tryReceive(gradField);
-        
-        // Update grabber stored frame number
-        kinectgrabber.lock();
-        kinectgrabber.decStoredframes();
-        kinectgrabber.unlock();
-        
-        // Is the depth image stabilized
-        imageStabilized = kinectgrabber.isImageStabilized();
-        
-        // Are we calibrating ?
-        if (applicationState == APPLICATION_STATE_CALIBRATING && !waitingForFlattenSand) 
+	// Get color image from kinect grabber
+	ofPixels coloredframe;
+	if (kinectOpened && kinectgrabber.colored.tryReceive(coloredframe))
+	{
+		kinectColorImage.setFromPixels(coloredframe);
+		hasKinectColorFrame = coloredframe.isAllocated() && coloredframe.getWidth() > 0 && coloredframe.getHeight() > 0;
+
+		if (TemporalFilteringType == 0)
+			TemporalFrameFilter.NewFrame(kinectColorImage.getPixels().getData(), kinectColorImage.width, kinectColorImage.height);
+		else if (TemporalFilteringType == 1)
+			TemporalFrameFilter.NewColFrame(kinectColorImage.getPixels().getData(), kinectColorImage.width, kinectColorImage.height);
+	}
+
+	if (receivedFilteredFrame)
+	{
+		// Get gradient field from kinect grabber
+		kinectgrabber.gradient.tryReceive(gradField);
+
+		// Update grabber stored frame number
+		kinectgrabber.lock();
+		kinectgrabber.decStoredframes();
+		kinectgrabber.unlock();
+
+		// Is the depth image stabilized
+		imageStabilized = kinectgrabber.isImageStabilized();
+	}
+
+	if (kinectOpened)
+	{
+		// Are we calibrating ?
+		if (applicationState == APPLICATION_STATE_CALIBRATING && !waitingForFlattenSand && receivedFilteredFrame)
 		{
-            updateCalibration();
-        } 
+			updateCalibration();
+		}
 		else 
 		{
 			//ofEnableAlphaBlending();
 			fboMainWindow.begin();
+			ofClear(0, 0, 0, 255);
             if (drawKinectView || drawKinectColorView)
 			{
-				if (drawKinectColorView)
+				if (drawKinectColorView && drawKinectView)
 				{
 					kinectColorImage.updateTexture();
-					kinectColorImage.draw(0, 0);
+					kinectColorImage.draw(0, 0, kinectRes.x * 0.5f, kinectRes.y);
+					FilteredDepthImage.draw(kinectRes.x * 0.5f, 0, kinectRes.x * 0.5f, kinectRes.y);
+					ofFill();
+					ofSetColor(0, 0, 0, 150);
+					ofDrawRectangle(0, 0, 78, 24);
+					ofDrawRectangle(kinectRes.x * 0.5f, 0, 78, 24);
+					ofSetColor(255);
+					ofDrawBitmapString("Color", 10, 16);
+					ofDrawBitmapString("Depth", kinectRes.x * 0.5f + 10, 16);
+					ofNoFill();
+				}
+				else if (drawKinectColorView)
+				{
+					if (hasKinectColorFrame)
+					{
+						kinectColorImage.updateTexture();
+						kinectColorImage.draw(0, 0);
+					}
+					else if (hasKinectDepthFrame)
+					{
+						FilteredDepthImage.draw(0, 0);
+					}
 				}
 				else
 				{
-					FilteredDepthImage.draw(0, 0);
+					if (hasKinectDepthFrame)
+					{
+						FilteredDepthImage.draw(0, 0);
+					}
 				}
 				ofNoFill();
 				
@@ -556,6 +725,7 @@ void KinectProjector::mouseReleased(int x, int y, int button)
 			setNewKinectROI();
 			ROICalibState = ROI_CALIBRATION_STATE_DONE;
 			calibrationText = "Manual ROI defined";
+			applicationState = APPLICATION_STATE_SETUP;
 			updateStatusGUI();
 		}
 	}
@@ -1305,7 +1475,7 @@ void KinectProjector::drawProjectorWindow(){
 
 void KinectProjector::drawMainWindow(float x, float y, float width, float height){
 
-	bool forceScale = false;
+	bool forceScale = true;
 	if (forceScale)
 	{
 		fboMainWindow.draw(x, y, width, height);
@@ -1322,18 +1492,46 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 
 	if (displayGui)
 	{
+		updateGuiLayout();
+		ofPushStyle();
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(
+			static_cast<GLint>(controlsViewportROI.x),
+			static_cast<GLint>(ofGetHeight() - controlsViewportROI.getMaxY()),
+			static_cast<GLsizei>(controlsViewportROI.width),
+			static_cast<GLsizei>(controlsViewportROI.height));
 		gui->draw();
 		StatusGUI->draw();
+		glDisable(GL_SCISSOR_TEST);
+
+		if (controlsMaxScrollY > 1.0f)
+		{
+			const float trackX = controlsViewportROI.getMaxX() - 5.0f;
+			const float trackY = controlsViewportROI.y + 4.0f;
+			const float trackH = controlsViewportROI.height - 8.0f;
+			const float thumbH = std::max(34.0f, trackH * (controlsViewportROI.height / (controlsViewportROI.height + controlsMaxScrollY)));
+			const float thumbY = trackY + (trackH - thumbH) * (controlsScrollY / controlsMaxScrollY);
+			ofFill();
+			ofSetColor(255, 255, 255, 38);
+			ofDrawRectangle(trackX, trackY, 3.0f, trackH);
+			ofSetColor(255, 255, 255, 130);
+			ofDrawRectangle(trackX - 1.0f, thumbY, 5.0f, thumbH);
+		}
+		ofPopStyle();
 	}
 }
 
 void KinectProjector::drawHardwareStatusPanel()
 {
-	const float panelX = 24;
-	const float panelY = 24;
-	const float panelW = 520;
-	const float panelH = secondScreenFound ? 170 : 205;
-	const float pad = 18;
+	const float viewportW = ofGetWidth();
+	const float viewportH = ofGetHeight();
+	const float scale = ofClamp(std::min(viewportW / 1280.0f, viewportH / 720.0f), 1.0f, 1.8f);
+	const float margin = 24.0f * scale;
+	const float panelX = margin;
+	const float panelY = margin;
+	const float panelW = std::min(viewportW - margin * 2.0f, 620.0f * scale);
+	const float panelH = (secondScreenFound ? 178.0f : 222.0f) * scale;
+	const float pad = 18.0f * scale;
 
 	ofPushStyle();
 	ofFill();
@@ -1346,9 +1544,12 @@ void KinectProjector::drawHardwareStatusPanel()
 
 	ofFill();
 	ofSetColor(255);
-	ofDrawBitmapString("Magic Sand Explorer hardware check", panelX + pad, panelY + 28);
+	ofPushMatrix();
+	ofTranslate(panelX + pad, panelY + 30.0f * scale);
+	ofScale(scale, scale);
+	ofDrawBitmapString("Magic Sand Explorer hardware check", 0, 0);
 	ofSetColor(255, 120, 120);
-	ofDrawBitmapString(getRequiredHardwareStatus(), panelX + pad, panelY + 58);
+	ofDrawBitmapString(getRequiredHardwareStatus(), 0, 30);
 
 	ofSetColor(230);
 	std::string details = "The app is open in setup mode.";
@@ -1358,7 +1559,8 @@ void KinectProjector::drawHardwareStatusPanel()
 	if (!secondScreenFound) {
 		details += "\nConnect a projector or second display, then press Recheck Hardware.";
 	}
-	ofDrawBitmapString(details, panelX + pad, panelY + 118);
+	ofDrawBitmapString(details, 0, 90);
+	ofPopMatrix();
 	ofPopStyle();
 }
 
@@ -1543,14 +1745,19 @@ void KinectProjector::setupGui(){
     gui = new ofxDatGui( ofxDatGuiAnchor::TOP_RIGHT );
 	gui->addButton("RUN!")->setName("Start Application");
 	gui->addButton("Recheck Hardware");
+	gui->addDropdown("Projector Display", { "Detecting projector displays" });
+	gui->addBreak();
+	gui->addButton("Define Sand Region");
+	gui->addButton("Calibrate Projector");
+	gui->addButton("Full Calibration");
 	gui->addBreak();
     gui->addFRM();
 	fpsKinectText = gui->addTextInput("Kinect FPS", "0");
     gui->addBreak();
     
     auto advancedFolder = gui->addFolder("Advanced", ofColor::purple);
-    advancedFolder->addToggle("Display kinect depth view", drawKinectView)->setName("Draw kinect depth view");
-	advancedFolder->addToggle("Display kinect color view", drawKinectColorView)->setName("Draw kinect color view");
+    advancedFolder->addToggle("Kinect depth view", drawKinectView)->setName("Draw kinect depth view");
+	advancedFolder->addToggle("Kinect color view", drawKinectColorView)->setName("Draw kinect color view");
 	advancedFolder->addToggle("Dump Debug", DumpDebugFiles);
 	advancedFolder->addSlider("Ceiling", -300, 300, 0);
     advancedFolder->addToggle("Spatial filtering", spatialFiltering);
@@ -1585,6 +1792,7 @@ void KinectProjector::setupGui(){
     gui->onButtonEvent(this, &KinectProjector::onButtonEvent);
     gui->onToggleEvent(this, &KinectProjector::onToggleEvent);
     gui->onSliderEvent(this, &KinectProjector::onSliderEvent);
+	gui->onDropdownEvent(this, &KinectProjector::onDropdownEvent);
 
 	// disactivate autodraw
 	gui->setAutoDraw(false);
@@ -1600,6 +1808,93 @@ void KinectProjector::setupGui(){
 	StatusGUI->addLabel("Projector Status");
 	StatusGUI->addHeader(":: Status ::", false);
 	StatusGUI->setAutoDraw(false);
+	refreshProjectorDisplayOptions();
+	updateGuiLayout();
+}
+
+void KinectProjector::updateGuiLayout()
+{
+	if (!displayGui || gui == nullptr || StatusGUI == nullptr)
+	{
+		return;
+	}
+
+	const int viewportW = std::max(1, ofGetWidth());
+	const int viewportH = std::max(1, ofGetHeight());
+	const int margin = static_cast<int>(ofClamp(viewportW * 0.025f, 16.0f, 32.0f));
+	const int sectionGap = static_cast<int>(ofClamp(viewportW * 0.018f, 14.0f, 24.0f));
+	const int controlInset = static_cast<int>(ofClamp(viewportW * 0.014f, 12.0f, 20.0f));
+	const int scrollbarGutter = 14;
+	const bool twoColumn = viewportW >= 980;
+	const int fontSize = static_cast<int>(ofClamp(std::round(std::min(viewportW / 150.0f, viewportH / 80.0f)), 9.0f, 11.0f));
+	const int rightSectionW = static_cast<int>(
+		twoColumn
+			? ofClamp(viewportW * 0.34f, 380.0f, 560.0f)
+			: viewportW - margin * 2.0f);
+	const int controlPanelW = static_cast<int>(
+		twoColumn
+			? std::max(320, rightSectionW - controlInset * 2 - scrollbarGutter)
+			: ofClamp(viewportW - margin * 2.0f - controlInset * 2.0f - scrollbarGutter, 300.0f, 540.0f));
+	const int statusPanelW = controlPanelW;
+	int controlsX = margin + controlInset;
+	int controlsTop = margin + controlInset;
+	int controlsBottom = viewportH - margin - controlInset;
+
+	const bool themeChanged = fontSize != guiThemeFontSize;
+	if (themeChanged)
+	{
+		guiTheme = makeResponsiveGuiTheme(fontSize);
+		gui->setTheme(guiTheme.get(), true);
+		StatusGUI->setTheme(guiTheme.get(), true);
+		guiThemeFontSize = fontSize;
+	}
+
+	if (themeChanged || controlPanelW != guiLayoutWidth)
+	{
+		gui->setWidth(controlPanelW, controlPanelW * 0.72f);
+		StatusGUI->setWidth(statusPanelW, statusPanelW * 0.78f);
+		guiLayoutWidth = controlPanelW;
+	}
+
+	if (twoColumn)
+	{
+		controlsX = viewportW - rightSectionW - margin + controlInset;
+		controlsTop = margin + controlInset;
+		controlsBottom = viewportH - margin - controlInset;
+	}
+	else
+	{
+		const int previewMaxH = std::max(180, viewportH - 220);
+		const int previewH = static_cast<int>(ofClamp(viewportH * 0.54f, 180.0f, static_cast<float>(previewMaxH)));
+		controlsX = margin + controlInset;
+		controlsTop = margin + previewH + sectionGap + controlInset;
+		controlsBottom = viewportH - margin - controlInset;
+	}
+
+	controlsViewportROI.set(
+		controlsX,
+		controlsTop,
+		controlPanelW,
+		std::max(48, controlsBottom - controlsTop));
+
+	const int contentH = gui->getHeight() + sectionGap + StatusGUI->getHeight();
+	controlsMaxScrollY = std::max(0.0f, static_cast<float>(contentH - controlsViewportROI.height));
+	controlsScrollY = ofClamp(controlsScrollY, 0.0f, controlsMaxScrollY);
+
+	const int scrolledY = static_cast<int>(controlsTop - controlsScrollY);
+	gui->setPosition(controlsX, scrolledY);
+	StatusGUI->setPosition(controlsX, scrolledY + gui->getHeight() + sectionGap);
+	guiLayoutHeight = viewportH;
+}
+
+void KinectProjector::onMouseScrolled(ofMouseEventArgs& e)
+{
+	if (!displayGui || controlsMaxScrollY <= 0.0f || !controlsViewportROI.inside(e.x, e.y))
+	{
+		return;
+	}
+
+	controlsScrollY = ofClamp(controlsScrollY - e.scrollY * 48.0f, 0.0f, controlsMaxScrollY);
 }
 
 
@@ -1798,6 +2093,14 @@ void KinectProjector::onButtonEvent(ofxDatGuiButtonEvent e){
 	{
 		recheckHardwareConnections();
 	}
+	else if (e.target->is("Define Sand Region"))
+	{
+		StartManualROIDefinition();
+	}
+	else if (e.target->is("Calibrate Projector"))
+	{
+		startAutomaticKinectProjectorCalibration();
+	}
 	else if (e.target->is("Update ROI from calibration")) {
 		updateROIFromCalibration();
 	} else if (e.target->is("Automatically detect sand region")) {
@@ -1819,13 +2122,33 @@ void KinectProjector::onButtonEvent(ofxDatGuiButtonEvent e){
 	}
 }
 
+void KinectProjector::onDropdownEvent(ofxDatGuiDropdownEvent e)
+{
+	if (e.target->is("Projector Display"))
+	{
+		selectProjectorDisplay(e.child);
+	}
+}
+
 void KinectProjector::StartManualROIDefinition()
 {
+	if (!kinectOpened)
+	{
+		ofLogVerbose("KinectProjector") << "StartManualROIDefinition(): Kinect not running";
+		return;
+	}
+
 	calibrationState = CALIBRATION_STATE_ROI_MANUAL_DETERMINATION;
 	ROICalibState = ROI_CALIBRATION_STATE_INIT;
 	ROIStartPoint.x = -1;
 	ROIStartPoint.y = -1;
 	calibrationText = "Manually defining sand region";
+	applicationState = APPLICATION_STATE_CALIBRATING;
+	drawKinectColorView = true;
+	if (gui != nullptr)
+	{
+		gui->getToggle("Draw kinect color view")->setChecked(drawKinectColorView);
+	}
 	updateStatusGUI();
 }
 
@@ -1868,19 +2191,9 @@ void KinectProjector::onToggleEvent(ofxDatGuiToggleEvent e){
 	}
 	else if (e.target->is("Draw kinect depth view")){
         drawKinectView = e.checked;
-		if (drawKinectView)
-		{
-			drawKinectColorView = false;
-			gui->getToggle("Draw kinect color view")->setChecked(drawKinectColorView);
-		}
     }
 	else if (e.target->is("Draw kinect color view")) {
 		drawKinectColorView = e.checked;
-		if (drawKinectColorView)
-		{
-			drawKinectView = false;
-			gui->getToggle("Draw kinect depth view")->setChecked(drawKinectView);
-		}
 	}
 	else if (e.target->is("Dump Debug"))
 	{

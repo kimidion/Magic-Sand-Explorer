@@ -112,17 +112,28 @@ void KinectV2DepthCamera::update()
 		libfreenect2::Frame* colorFrame = colorFrameIt->second;
 		const unsigned char* colorData = colorFrame->data;
 		unsigned char* out = colorPixels.getData();
+		colorPixels.set(0);
 
-		for (unsigned int y = 0; y < getHeight(); ++y)
+		const float dstW = static_cast<float>(getWidth());
+		const float dstH = static_cast<float>(getHeight());
+		const float srcW = static_cast<float>(colorFrame->width);
+		const float srcH = static_cast<float>(colorFrame->height);
+		const float scale = std::min(dstW / srcW, dstH / srcH);
+		const unsigned int drawW = std::max(1u, static_cast<unsigned int>(std::round(srcW * scale)));
+		const unsigned int drawH = std::max(1u, static_cast<unsigned int>(std::round(srcH * scale)));
+		const unsigned int offsetX = (getWidth() - drawW) / 2;
+		const unsigned int offsetY = (getHeight() - drawH) / 2;
+
+		for (unsigned int y = 0; y < drawH; ++y)
 		{
-			unsigned int srcY = static_cast<unsigned int>((static_cast<float>(y) / getHeight()) * colorFrame->height);
+			unsigned int srcY = static_cast<unsigned int>((static_cast<float>(y) / drawH) * colorFrame->height);
 			srcY = std::min(srcY, static_cast<unsigned int>(colorFrame->height - 1));
-			for (unsigned int x = 0; x < getWidth(); ++x)
+			for (unsigned int x = 0; x < drawW; ++x)
 			{
-				unsigned int srcX = static_cast<unsigned int>((static_cast<float>(x) / getWidth()) * colorFrame->width);
+				unsigned int srcX = static_cast<unsigned int>((static_cast<float>(x) / drawW) * colorFrame->width);
 				srcX = std::min(srcX, static_cast<unsigned int>(colorFrame->width - 1));
 				const size_t srcIdx = (srcY * colorFrame->width + srcX) * colorFrame->bytes_per_pixel;
-				const size_t dstIdx = (y * getWidth() + x) * 3;
+				const size_t dstIdx = ((y + offsetY) * getWidth() + (x + offsetX)) * 3;
 
 				if (colorFrame->format == libfreenect2::Frame::BGRX)
 				{
