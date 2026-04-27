@@ -27,6 +27,14 @@ General Public License for more details.
 KinectGrabber::KinectGrabber()
 :newFrame(true),
 bufferInitiated(false),
+firstImageReady(false),
+kinectColorImage(),
+kinectDepthImage(),
+filteredframe(),
+gradField(nullptr),
+averagingBuffer(nullptr),
+statBuffer(nullptr),
+validBuffer(nullptr),
 kinectOpened(false),
 requestedCameraType(DepthCameraType::Auto),
 activeCameraType(DepthCameraType::Auto),
@@ -152,6 +160,25 @@ bool KinectGrabber::openKinect() {
 	return kinectOpened;
 }
 
+bool KinectGrabber::rescanKinect()
+{
+	if (isThreadRunning())
+	{
+		stopThread();
+		waitForThread(true);
+	}
+
+	if (camera)
+	{
+		camera->close();
+		camera.reset();
+	}
+
+	releaseBuffers();
+
+	return setup();
+}
+
 std::string KinectGrabber::getCameraName() const
 {
 	return camera ? camera->getName() : "No depth camera";
@@ -188,11 +215,27 @@ void KinectGrabber::setupFramefilter(int sgradFieldresolution, float newMaxOffse
     //Setup ROI
     setKinectROI(ROI);
     
+	releaseBuffers();
+
     //setting buffers
 	initiateBuffers();
 }
 
+void KinectGrabber::releaseBuffers()
+{
+	delete[] averagingBuffer;
+	delete[] statBuffer;
+	delete[] validBuffer;
+	delete[] gradField;
+	averagingBuffer = nullptr;
+	statBuffer = nullptr;
+	validBuffer = nullptr;
+	gradField = nullptr;
+	bufferInitiated = false;
+}
+
 void KinectGrabber::initiateBuffers(void){
+	releaseBuffers();
 	filteredframe.set(0);
 
     averagingBuffer=new float[numAveragingSlots*height*width];
@@ -232,13 +275,7 @@ void KinectGrabber::initiateBuffers(void){
 }
 
 void KinectGrabber::resetBuffers(void){
-    if (bufferInitiated){
-        bufferInitiated = false;
-        delete[] averagingBuffer;
-        delete[] statBuffer;
-        delete[] validBuffer;
-        delete[] gradField;
-    }
+	releaseBuffers();
     initiateBuffers();
 }
 
@@ -279,13 +316,7 @@ void KinectGrabber::threadedFunction() {
     {
         camera->close();
     }
-	if (bufferInitiated)
-	{
-		delete[] averagingBuffer;
-		delete[] statBuffer;
-		delete[] validBuffer;
-		delete[] gradField;
-	}
+	releaseBuffers();
 }
 
 void KinectGrabber::performInThread(std::function<void(KinectGrabber&)> action) {
@@ -679,38 +710,20 @@ void KinectGrabber::setKinectROI(ofRectangle ROI){
 }
 
 void KinectGrabber::setAveragingSlotsNumber(int snumAveragingSlots){
-    if (bufferInitiated){
-            bufferInitiated = false;
-            delete[] averagingBuffer;
-            delete[] statBuffer;
-            delete[] validBuffer;
-            delete[] gradField;
-        }
+	releaseBuffers();
     numAveragingSlots = snumAveragingSlots;
     minNumSamples=(numAveragingSlots+1)/2;
     initiateBuffers();
 }
 
 void KinectGrabber::setGradFieldResolution(int sgradFieldresolution){
-    if (bufferInitiated){
-        bufferInitiated = false;
-        delete[] averagingBuffer;
-        delete[] statBuffer;
-        delete[] validBuffer;
-        delete[] gradField;
-    }
+	releaseBuffers();
     gradFieldresolution = sgradFieldresolution;
     initiateBuffers();
 }
 
 void KinectGrabber::setFollowBigChange(bool newfollowBigChange){
-    if (bufferInitiated){
-        bufferInitiated = false;
-        delete[] averagingBuffer;
-        delete[] statBuffer;
-        delete[] validBuffer;
-        delete[] gradField;
-    }
+	releaseBuffers();
     followBigChange = newfollowBigChange;
     initiateBuffers();
 }

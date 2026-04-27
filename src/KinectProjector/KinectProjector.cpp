@@ -47,12 +47,12 @@ std::unique_ptr<ofxDatGuiTheme> makeResponsiveGuiTheme(int fontSize)
 {
 	auto theme = std::make_unique<ofxDatGuiTheme>();
 	theme->font.size = fontSize;
-	theme->layout.height = std::max(30.0f, fontSize * 3.0f);
-	theme->layout.padding = std::max(3.0f, fontSize * 0.35f);
-	theme->layout.vMargin = std::max(2.0f, fontSize * 0.18f);
-	theme->layout.iconSize = std::max(10.0f, fontSize * 1.1f);
+	theme->layout.height = std::max(42.0f, fontSize * 3.1f);
+	theme->layout.padding = std::max(5.0f, fontSize * 0.4f);
+	theme->layout.vMargin = std::max(3.0f, fontSize * 0.2f);
+	theme->layout.iconSize = std::max(16.0f, fontSize * 1.15f);
 	theme->layout.labelMargin = std::max(8.0f, fontSize * 0.8f);
-	theme->layout.breakHeight = std::max(6.0f, fontSize * 0.55f);
+	theme->layout.breakHeight = std::max(10.0f, fontSize * 0.65f);
 	theme->layout.textInput.highlightPadding = std::max(6, static_cast<int>(fontSize * 0.75f));
 	theme->stripe.width = std::max(4, static_cast<int>(fontSize * 0.35f));
 	theme->init();
@@ -67,6 +67,15 @@ std::string truncateForPanel(const std::string& text, int panelWidth, float widt
 		return text;
 	}
 	return text.substr(0, std::max(0, maxChars - 3)) + "...";
+}
+
+void drawScaledBitmapString(const std::string& text, float x, float y, float scale)
+{
+	ofPushMatrix();
+	ofTranslate(x, y);
+	ofScale(scale, scale);
+	ofDrawBitmapString(text, 0, 0);
+	ofPopMatrix();
 }
 }
 
@@ -86,6 +95,11 @@ drawKinectColorView(true)
 	secondScreenFound = true;
 	doShowROIonProjector = false;
 	applicationState = APPLICATION_STATE_SETUP;
+	currentCalibPts = 0;
+	trials = 0;
+	upframe = false;
+	kpt = nullptr;
+	gradField = nullptr;
     projWindow = p;
 	TemporalFilteringType = 1;
 	DumpDebugFiles = true;
@@ -182,6 +196,15 @@ void KinectProjector::setup(bool sdisplayGui)
     ofClear(255, 255, 255, 0);
     fboMainWindow.end();
 
+	uiFontsLoaded =
+		uiFontSmall.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 19, true, true) &&
+		uiFont.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 27, true, true) &&
+		uiFontLarge.load("ofxbraitsch/fonts/HelveticaNeueLTStd-Md.otf", 40, true, true);
+	if (!uiFontsLoaded)
+	{
+		ofLogWarning("KinectProjector") << "Could not load UI fonts; falling back to bitmap text";
+	}
+
     if (displayGui)
         setupGui();
 
@@ -219,25 +242,50 @@ std::string KinectProjector::getRequiredHardwareStatus() const
 
 void KinectProjector::recheckHardwareConnections()
 {
-	if (!kinectOpened)
+	calibrationText = "Rechecking hardware...";
+	updateStatusGUI();
+
+	const ofVec2f previousKinectRes = kinectRes;
+	kinectOpened = kinectgrabber.rescanKinect();
+
+	if (kinectOpened)
 	{
-		kinectOpened = kinectgrabber.openKinect();
+		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): A Kinect was found";
+		kinectRes = kinectgrabber.getKinectSize();
+		kinectROI = ofRectangle(0, 0, kinectRes.x, kinectRes.y);
+		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectROI " << kinectROI;
 
-		if (kinectOpened)
+		if (previousKinectRes != kinectRes)
 		{
-			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): A Kinect was found";
-			kinectRes = kinectgrabber.getKinectSize();
-			kinectROI = ofRectangle(0, 0, kinectRes.x, kinectRes.y);
-			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectROI " << kinectROI;
+			FilteredDepthImage.allocate(kinectRes.x, kinectRes.y);
+			kinectColorImage.allocate(kinectRes.x, kinectRes.y);
+			thresholdedImage.allocate(kinectRes.x, kinectRes.y);
+			fboMainWindow.allocate(kinectRes.x, kinectRes.y, GL_RGBA);
+			fboMainWindow.begin();
+			ofClear(255, 255, 255, 0);
+			fboMainWindow.end();
 
-			kinectgrabber.setupFramefilter(gradFieldResolution, maxOffset, kinectROI, spatialFiltering, followBigChanges, numAveragingSlots);
-			kinectWorldMatrix = kinectgrabber.getWorldMatrix();
-			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectWorldMatrix: " << kinectWorldMatrix;
+			if (kpt != nullptr)
+			{
+				delete kpt;
+			}
+			kpt = new ofxKinectProjectorToolkit(projRes, kinectRes);
+			ROIcalibrated = false;
+			projKinectCalibrated = false;
+			projKinectCalibrationUpdated = false;
 		}
-		else
-		{
-			ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Kinect still not found";
-		}
+
+		kinectgrabber.setupFramefilter(gradFieldResolution, maxOffset, kinectROI, spatialFiltering, followBigChanges, numAveragingSlots);
+		kinectWorldMatrix = kinectgrabber.getWorldMatrix();
+		kinectgrabber.start();
+		calibrationText = "Hardware rechecked: Kinect connected";
+		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): kinectWorldMatrix: " << kinectWorldMatrix;
+	}
+	else
+	{
+		kinectgrabber.start();
+		calibrationText = "Hardware rechecked: Kinect not found";
+		ofLogVerbose("KinectProjector") << "recheckHardwareConnections(): Kinect still not found";
 	}
 
 	refreshProjectorDisplayOptions();
@@ -378,9 +426,24 @@ void KinectProjector::exit(ofEventArgs& e)
 			ofLogVerbose("KinectProjector") << "exit(): Settings could not be saved ";
 		}
 	}
+	if (kpt != nullptr)
+	{
+		delete kpt;
+		kpt = nullptr;
+	}
+	if (gradField != nullptr)
+	{
+		delete[] gradField;
+		gradField = nullptr;
+	}
 }
 
 void KinectProjector::setupGradientField(){
+	if (gradField != nullptr)
+	{
+		delete[] gradField;
+		gradField = nullptr;
+	}
     gradFieldcols = kinectRes.x / gradFieldResolution;
     gradFieldrows = kinectRes.y / gradFieldResolution;
     
@@ -493,7 +556,7 @@ void KinectProjector::updateStatusGUI()
 	StatusGUI->getLabel("Application Status")->setLabel("State: " + AppStatus);
 	StatusGUI->getLabel("Application Status")->setLabelColor(ofColor(255, 255, 0));
 
-	StatusGUI->getLabel("Calibration Step")->setLabel(truncateForPanel("Step: " + calibrationText, guiLayoutWidth));
+	StatusGUI->getLabel("Calibration Step")->setLabel(truncateForPanel("Next: " + calibrationText, guiLayoutWidth, 0.9f));
 	StatusGUI->getLabel("Calibration Step")->setLabelColor(ofColor(0, 255, 255));
 
 	gui->getToggle("Spatial filtering")->setChecked(spatialFiltering);
@@ -700,6 +763,226 @@ void KinectProjector::mousePressed(int x, int y, int button)
 	}
 }
 
+bool KinectProjector::handleCalibrationClick(float x, float y)
+{
+	if (calibrationActionROI.inside(x, y))
+	{
+		return advanceCalibrationPrompt();
+	}
+	return false;
+}
+
+bool KinectProjector::handleWorkflowClick(float x, float y)
+{
+	if (workflowCancelROI.inside(x, y))
+	{
+		cancelCalibration("Calibration cancelled. Adjust camera/projector, then try again.");
+		return true;
+	}
+	if (workflowContinueROI.inside(x, y))
+	{
+		return advanceCalibrationPrompt();
+	}
+	if (workflowRecheckROI.inside(x, y))
+	{
+		recheckHardwareConnections();
+		return true;
+	}
+	if (workflowDefineROI.inside(x, y))
+	{
+		StartManualROIDefinition();
+		return true;
+	}
+	if (workflowCalibrateROI.inside(x, y))
+	{
+		startAutomaticKinectProjectorCalibration();
+		return true;
+	}
+	if (workflowRunROI.inside(x, y))
+	{
+		startApplication();
+		return true;
+	}
+	return false;
+}
+
+bool KinectProjector::workflowScreenToKinect(float x, float y, ofVec2f& kinectPoint, bool clampToPreview) const
+{
+	if (applicationState == APPLICATION_STATE_RUNNING ||
+		workflowPreviewROI.width <= 0 ||
+		workflowPreviewROI.height <= 0 ||
+		kinectRes.x <= 0 ||
+		kinectRes.y <= 0)
+	{
+		return false;
+	}
+
+	if (!clampToPreview && !workflowPreviewROI.inside(x, y))
+	{
+		return false;
+	}
+
+	kinectPoint.set(
+		ofMap(x, workflowPreviewROI.x, workflowPreviewROI.getMaxX(), 0, kinectRes.x, true),
+		ofMap(y, workflowPreviewROI.y, workflowPreviewROI.getMaxY(), 0, kinectRes.y, true));
+	return true;
+}
+
+bool KinectProjector::handleWorkflowPreviewMousePressed(float x, float y, int button)
+{
+	ofVec2f kinectPoint;
+	if (!workflowScreenToKinect(x, y, kinectPoint))
+	{
+		return false;
+	}
+
+	workflowPreviewDragActive = true;
+	mousePressed(kinectPoint.x, kinectPoint.y, button);
+	return true;
+}
+
+bool KinectProjector::handleWorkflowPreviewMouseDragged(float x, float y, int button)
+{
+	if (!workflowPreviewDragActive)
+	{
+		return false;
+	}
+
+	ofVec2f kinectPoint;
+	if (!workflowScreenToKinect(x, y, kinectPoint, true))
+	{
+		return false;
+	}
+
+	mouseDragged(kinectPoint.x, kinectPoint.y, button);
+	return true;
+}
+
+bool KinectProjector::handleWorkflowPreviewMouseReleased(float x, float y, int button)
+{
+	if (!workflowPreviewDragActive)
+	{
+		return false;
+	}
+
+	workflowPreviewDragActive = false;
+	ofVec2f kinectPoint;
+	if (!workflowScreenToKinect(x, y, kinectPoint, true))
+	{
+		return false;
+	}
+
+	mouseReleased(kinectPoint.x, kinectPoint.y, button);
+	return true;
+}
+
+void KinectProjector::cancelCalibration(const std::string& reason)
+{
+	if (applicationState != APPLICATION_STATE_CALIBRATING)
+	{
+		return;
+	}
+
+	waitingForFlattenSand = false;
+	applicationState = APPLICATION_STATE_SETUP;
+	fullCalibState = FULL_CALIBRATION_STATE_DONE;
+	ROICalibState = ROIcalibrated ? ROI_CALIBRATION_STATE_DONE : ROI_CALIBRATION_STATE_INIT;
+	resetProjectorCalibrationAttempt();
+	calibrationText = reason;
+
+	fboProjWindow.begin();
+	ofClear(255, 255, 255, 255);
+	ofBackground(255);
+	fboProjWindow.end();
+
+	if (confirmModal != nullptr)
+	{
+		confirmModal->hide();
+	}
+	if (calibModal != nullptr)
+	{
+		calibModal->hide();
+	}
+
+	updateStatusGUI();
+}
+
+bool KinectProjector::advanceCalibrationPrompt()
+{
+	if (applicationState != APPLICATION_STATE_CALIBRATING)
+	{
+		return false;
+	}
+
+	if (waitingForFlattenSand)
+	{
+		waitingForFlattenSand = false;
+		calibrationText = "Waiting for stable Kinect frame";
+		updateStatusGUI();
+		return true;
+	}
+
+	if ((calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+		 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB)) &&
+		autoCalibState == AUTOCALIB_STATE_NEXT_POINT &&
+		currentCalibPts >= 5 &&
+		!upframe)
+	{
+		upframe = true;
+		imageStabilized = false;
+		TemporalFrameCounter = 0;
+		trials = 0;
+		calibrationText = "Raised surface: capturing point 1 of 5";
+		if (confirmModal != nullptr)
+		{
+			confirmModal->hide();
+		}
+		if (calibModal != nullptr)
+		{
+			calibModal->hide();
+		}
+		if (!autoCalibPts.empty() && currentCalibPts >= 0 && currentCalibPts < autoCalibPts.size())
+		{
+			ofPoint dispPt = ofPoint(projRes.x / 2, projRes.y / 2) + autoCalibPts[currentCalibPts];
+			drawChessboard(dispPt.x, dispPt.y, chessboardSize);
+		}
+		updateStatusGUI();
+		return true;
+	}
+
+	return false;
+}
+
+void KinectProjector::resetProjectorCalibrationAttempt()
+{
+	waitingForFlattenSand = false;
+	autoCalibState = AUTOCALIB_STATE_DONE;
+	currentCalibPts = 0;
+	trials = 0;
+	upframe = false;
+	TemporalFrameCounter = 0;
+	pairsKinect.clear();
+	pairsProjector.clear();
+	currentProjectorPoints.clear();
+	cvPoints.clear();
+	autoCalibPts.clear();
+	if (kinectOpened)
+	{
+		updateKinectGrabberROI(kinectROI);
+		kinectgrabber.performInThread([this](KinectGrabber & kg) {
+			kg.setMaxOffset(this->maxOffset);
+		});
+	}
+	if (confirmModal != nullptr)
+	{
+		confirmModal->hide();
+	}
+	if (calibModal != nullptr)
+	{
+		calibModal->hide();
+	}
+}
+
 
 void KinectProjector::mouseReleased(int x, int y, int button)
 {
@@ -723,6 +1006,7 @@ void KinectProjector::mouseReleased(int x, int y, int button)
 			ofRectangle tempRect(xmin, ymin, xmax - xmin, ymax - ymin);
 			kinectROI = tempRect;
 			setNewKinectROI();
+			ROIcalibrated = true;
 			ROICalibState = ROI_CALIBRATION_STATE_DONE;
 			calibrationText = "Manual ROI defined";
 			applicationState = APPLICATION_STATE_SETUP;
@@ -1048,13 +1332,14 @@ void KinectProjector::updateProjKinectAutoCalibration()
 		{
 			applicationState = APPLICATION_STATE_SETUP;
 			calibrationText = "Failed to acquire sea level plane";
+			resetProjectorCalibrationAttempt();
 			updateStatusGUI();
 			return;
 		}
 		calibrationText = "Sea level plane estimated";
 		updateStatusGUI();
 
-        autoCalibPts = new ofPoint[10];
+		autoCalibPts.assign(10, ofPoint(0, 0));
 		float cs = 4 * chessboardSize / 3; 
 		float css = 3 * chessboardSize / 4;
         ofPoint sc = ofPoint(projRes.x/2,projRes.y/2);
@@ -1102,10 +1387,11 @@ void KinectProjector::updateProjKinectAutoCalibration()
         kinectgrabber.performInThread([this](KinectGrabber & kg) {
             kg.setMaxOffset(this->maxOffset);
         });
-        if (pairsKinect.size() == 0) {
+		if (pairsKinect.size() == 0) {
             ofLogVerbose("KinectProjector") << "autoCalib(): Error: No points acquired !!" ;
 			calibrationText = "Calibration failed: No points acquired";
 			applicationState = APPLICATION_STATE_SETUP;
+			resetProjectorCalibrationAttempt();
 			updateStatusGUI();
         } 
 		else 
@@ -1123,7 +1409,8 @@ void KinectProjector::updateProjKinectAutoCalibration()
 				projKinectCalibrated = false; 
 				projKinectCalibrationUpdated = false;
 				applicationState = APPLICATION_STATE_SETUP;
-				calibrationText = "Calibration failed - reprojection error too big";
+				calibrationText = "Calibration failed: project target onto sand surface";
+				resetProjectorCalibrationAttempt();
 				updateStatusGUI();
 				return;
 			}
@@ -1145,10 +1432,15 @@ void KinectProjector::updateProjKinectAutoCalibration()
 			}
 			updateStatusGUI();
         }
-        autoCalibState = AUTOCALIB_STATE_DONE;
+		resetProjectorCalibrationAttempt();
     }
 	else if (!imageStabilized)
 	{
+		if (calibrationText != "Waiting for stable Kinect frame")
+		{
+			calibrationText = "Waiting for stable Kinect frame";
+			updateStatusGUI();
+		}
 		ofLogVerbose("KinectProjector") << "updateProjKinectAutoCalibration(): image not stabilised";
 	}
 	else if (autoCalibState == AUTOCALIB_STATE_DONE)
@@ -1284,15 +1576,18 @@ void KinectProjector::CalibrateNextPoint()
 			{
 				trials = 0;
 				currentCalibPts++;
-				ofPoint dispPt = ofPoint(projRes.x / 2, projRes.y / 2) + autoCalibPts[currentCalibPts]; // Compute next chessboard position
-				drawChessboard(dispPt.x, dispPt.y, chessboardSize); // We can now draw the next chess board
+				if (currentCalibPts < autoCalibPts.size())
+				{
+					ofPoint dispPt = ofPoint(projRes.x / 2, projRes.y / 2) + autoCalibPts[currentCalibPts]; // Compute next chessboard position
+					drawChessboard(dispPt.x, dispPt.y, chessboardSize); // We can now draw the next chess board
+				}
 			}
 			else
 			{
 				// We cannot get all depth points for the chessboard
 				trials++;
 				ofLogVerbose("KinectProjector") << "autoCalib(): Depth points of chessboard not allfound on trial : " << trials;
-				if (trials > 3)
+				if (trials > 3 && currentCalibPts < autoCalibPts.size())
 				{
 					// Move the chessboard closer to the center of the screen
 					ofLogVerbose("KinectProjector") << "autoCalib(): Chessboard could not be found moving chessboard closer to center ";
@@ -1308,7 +1603,7 @@ void KinectProjector::CalibrateNextPoint()
 			// We cannot find the chessboard
 			trials++;
 			ofLogVerbose("KinectProjector") << "autoCalib(): Chessboard not found on trial : " << trials;
-			if (trials > 3) 
+			if (trials > 3 && currentCalibPts < autoCalibPts.size()) 
 			{
 				// Move the chessboard closer to the center of the screen
 				ofLogVerbose("KinectProjector") << "autoCalib(): Chessboard could not be found moving chessboard closer to center ";
@@ -1331,6 +1626,8 @@ void KinectProjector::CalibrateNextPoint()
 		}
 		else
 		{ // We ask for higher points
+			calibrationText = "Place a flat board on the sand, then continue";
+			updateStatusGUI();
 			calibModal->hide();
 			confirmModal->show();
 			confirmModal->setMessage("Please cover the sandbox with a board and press ok.");
@@ -1374,8 +1671,7 @@ void KinectProjector::updateBasePlane()
         return;
     }
     ofVec4f pt;
-    ofVec3f* points;
-    points = new ofVec3f[sw*sh];
+	std::vector<ofVec3f> points(sw * sh);
     ofLogVerbose("KinectProjector") << "updateBasePlane(): Computing points in smallROI : " << sw*sh ;
     for (int x = 0; x<sw; x++){
         for (int y = 0; y<sh; y ++){
@@ -1383,7 +1679,7 @@ void KinectProjector::updateBasePlane()
         }
     }
     ofLogVerbose("KinectProjector") << "updateBasePlane(): Computing plane from points" ;
-    basePlaneEq = plane_from_points(points, sw*sh);
+    basePlaneEq = plane_from_points(points.data(), sw*sh);
 	if (basePlaneEq.x == 0 && basePlaneEq.y == 0 && basePlaneEq.z == 0)
 	{
 		ofLogVerbose("KinectProjector") << "updateBasePlane(): plane_from_points could not compute basePlane";
@@ -1413,8 +1709,7 @@ void KinectProjector::updateMaxOffset(){
         return;
     }
     ofVec4f pt;
-    ofVec3f* points;
-    points = new ofVec3f[sw*sh];
+	std::vector<ofVec3f> points(sw * sh);
     ofLogVerbose("KinectProjector") << "updateMaxOffset(): Computing points in smallROI : " << sw*sh ;
     for (int x = 0; x<sw; x++){
         for (int y = 0; y<sh; y ++){
@@ -1422,7 +1717,7 @@ void KinectProjector::updateMaxOffset(){
         }
     }
     ofLogVerbose("KinectProjector") << "updateMaxOffset(): Computing plane from points" ;
-    ofVec4f eqoff = plane_from_points(points, sw*sh);
+    ofVec4f eqoff = plane_from_points(points.data(), sw*sh);
     maxOffset = -eqoff.w-maxOffsetSafeRange;
     maxOffsetBack = maxOffset;
     // Update max Offset
@@ -1462,8 +1757,11 @@ bool KinectProjector::addPointPair() {
 
 void KinectProjector::askToFlattenSand(){
     fboProjWindow.begin();
+    ofClear(255, 255, 255, 255);
     ofBackground(255);
     fboProjWindow.end();
+    calibrationText = "Flatten sand, then confirm";
+    updateStatusGUI();
     confirmModal->setMessage("Please flatten the sand surface.");
     confirmModal->show();
     waitingForFlattenSand = true;
@@ -1485,6 +1783,12 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 		fboMainWindow.draw(x, y);
 	}
 
+	if (displayGui && applicationState != APPLICATION_STATE_RUNNING)
+	{
+		drawSetupWorkflowScreen(x, y, width, height);
+		return;
+	}
+
 	if (!isRequiredHardwareConnected())
 	{
 		drawHardwareStatusPanel();
@@ -1493,6 +1797,7 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 	if (displayGui)
 	{
 		updateGuiLayout();
+		drawCalibrationWorkflowPanel(x, y, width, height);
 		ofPushStyle();
 		glEnable(GL_SCISSOR_TEST);
 		glScissor(
@@ -1519,6 +1824,437 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 		}
 		ofPopStyle();
 	}
+}
+
+void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, float height)
+{
+	workflowRecheckROI.set(0, 0, 0, 0);
+	workflowDefineROI.set(0, 0, 0, 0);
+	workflowCalibrateROI.set(0, 0, 0, 0);
+	workflowRunROI.set(0, 0, 0, 0);
+	workflowContinueROI.set(0, 0, 0, 0);
+	workflowCancelROI.set(0, 0, 0, 0);
+	workflowPreviewROI.set(0, 0, 0, 0);
+
+	const float viewportW = ofGetWidth();
+	const float viewportH = ofGetHeight();
+	const float margin = ofClamp(viewportW * 0.026f, 24.0f, 42.0f);
+	const float gap = ofClamp(viewportW * 0.018f, 20.0f, 34.0f);
+	const float panelW = ofClamp(viewportW * 0.42f, 680.0f, 920.0f);
+	const float panelX = viewportW - margin - panelW;
+	const float panelY = margin;
+	const float panelH = viewportH - margin * 2.0f;
+	const float previewX = margin;
+	const float previewY = margin + 72.0f;
+	const float previewW = panelX - gap - margin;
+	const float previewH = viewportH - previewY - margin;
+
+	ofPushStyle();
+	ofFill();
+	ofSetColor(10, 13, 16, 238);
+	ofDrawRectangle(0, 0, viewportW, viewportH);
+
+	ofSetColor(245);
+	if (uiFontsLoaded)
+	{
+		const std::string heading = applicationState == APPLICATION_STATE_CALIBRATING ? "Calibration" : "Welcome! Let's get started.";
+		uiFontLarge.drawString(heading, margin, margin + 34.0f);
+	}
+	else
+	{
+		drawScaledBitmapString("Welcome! Let's get started.", margin, margin + 32.0f, 2.0f);
+	}
+
+	ofSetColor(18, 22, 26);
+	ofDrawRectangle(previewX, previewY, previewW, previewH);
+	ofSetColor(255);
+	const float sourceW = std::max(1.0f, fboMainWindow.getWidth());
+	const float sourceH = std::max(1.0f, fboMainWindow.getHeight());
+	const float previewScale = std::min(previewW / sourceW, previewH / sourceH);
+	const float fittedW = sourceW * previewScale;
+	const float fittedH = sourceH * previewScale;
+	const float fittedX = previewX + (previewW - fittedW) * 0.5f;
+	const float fittedY = previewY + (previewH - fittedH) * 0.5f;
+	workflowPreviewROI.set(fittedX, fittedY, fittedW, fittedH);
+	fboMainWindow.draw(fittedX, fittedY, fittedW, fittedH);
+	ofNoFill();
+	ofSetLineWidth(3);
+	ofSetColor(255, 65, 35);
+	ofDrawRectangle(fittedX, fittedY, fittedW, fittedH);
+
+	ofFill();
+	ofSetColor(18, 21, 24, 248);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+	ofSetColor(255, 210, 30);
+	ofDrawRectangle(panelX, panelY, 8.0f, panelH);
+	ofNoFill();
+	ofSetLineWidth(2);
+	ofSetColor(62, 72, 80);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+
+	float cursorY = panelY + 58.0f;
+	const float textX = panelX + 48.0f;
+	const float textW = panelW - 96.0f;
+
+	auto drawText = [&](ofTrueTypeFont& font, const std::string& text, float px, float py, ofColor color) {
+		ofSetColor(color);
+		if (uiFontsLoaded)
+		{
+			font.drawString(text, px, py);
+		}
+		else
+		{
+			drawScaledBitmapString(text, px, py, 1.5f);
+		}
+	};
+
+	std::string title = "Setup workflow";
+	std::string body = "The app will walk through hardware, sand region, projector calibration, then running the sandbox.";
+	std::string failure;
+
+	if (!isRequiredHardwareConnected())
+	{
+		title = "Hardware check";
+		body = getRequiredHardwareStatus();
+	}
+	else if (!ROIcalibrated)
+	{
+		title = "Step 1: Define sand region";
+		body = "Drag a rectangle over the active sand area in the camera view. This tells calibration which physical surface to use.";
+	}
+	else if (!projKinectCalibrated)
+	{
+		title = "Step 2: Calibrate projector";
+		body = "Project the calibration target onto the sand surface itself. Do not calibrate against a wall, screen, or vertical board.";
+		if (calibrationText.find("failed") != std::string::npos || calibrationText.find("Failed") != std::string::npos)
+		{
+			failure = "Why it failed: " + calibrationText;
+		}
+	}
+	else
+	{
+		title = "Ready to run";
+		body = "Hardware, sand region, and projector calibration are ready.";
+	}
+
+	if (applicationState == APPLICATION_STATE_CALIBRATING)
+	{
+		const bool waitingForRaisedSurface =
+			(calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+			 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB)) &&
+			autoCalibState == AUTOCALIB_STATE_NEXT_POINT &&
+			currentCalibPts >= 5 && !upframe && !waitingForFlattenSand;
+
+		if (calibrationState == CALIBRATION_STATE_ROI_MANUAL_DETERMINATION)
+		{
+			title = "Define sand region";
+			body = "Drag across the camera view to frame only the active sand surface.";
+		}
+		else if (waitingForFlattenSand)
+		{
+			title = "Flatten the sand";
+			body = "Smooth the sand surface, then continue. This captures the base plane.";
+		}
+		else if (waitingForRaisedSurface)
+		{
+			title = "Raise the surface";
+			body = "Place a flat board on top of the sandbox so the Kinect sees a higher, level surface. When it is steady, continue to capture the raised calibration points.";
+		}
+		else if (calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+				 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB))
+		{
+			title = "Projector calibration";
+			body = "The target must be projected onto the sand surface. If it appears on the wall or bright background screen, calibration will fail.";
+		}
+	}
+
+	drawText(uiFontLarge, title, textX, cursorY, ofColor(255));
+	cursorY += 62.0f;
+	ofSetColor(220);
+	if (uiFontsLoaded)
+	{
+		cursorY += drawWrappedText(uiFont, body, textX, cursorY, textW, 48.0f) + 34.0f;
+	}
+	else
+	{
+		drawScaledBitmapString(body, textX, cursorY, 1.4f);
+		cursorY += 60.0f;
+	}
+
+	if (!failure.empty())
+	{
+		ofSetColor(70, 18, 18);
+		ofDrawRectangle(textX - 12.0f, cursorY - 22.0f, textW + 24.0f, 104.0f);
+		ofSetColor(255, 85, 70);
+		if (uiFontsLoaded)
+		{
+			cursorY += drawWrappedText(uiFont, failure, textX, cursorY, textW, 48.0f) + 34.0f;
+		}
+		else
+		{
+			drawScaledBitmapString(failure, textX, cursorY, 1.4f);
+			cursorY += 70.0f;
+		}
+	}
+
+	const float progressY = std::max(cursorY + 12.0f, panelY + 320.0f);
+	drawText(uiFont, applicationState == APPLICATION_STATE_CALIBRATING ? "Calibration progress" : "Setup progress", textX, progressY, ofColor(245));
+	const float itemY = progressY + 46.0f;
+	const float rowH = applicationState == APPLICATION_STATE_CALIBRATING ? 84.0f : 88.0f;
+
+	auto drawStep = [&](int index, const std::string& label, const std::string& detail, bool done, bool active, float rowY) {
+		const ofColor stripe = done ? ofColor(0, 220, 95) : (active ? ofColor(255, 210, 30) : ofColor(85, 94, 102));
+		ofFill();
+		ofSetColor(active ? ofColor(34, 36, 33) : ofColor(25, 29, 32));
+		ofDrawRectangle(textX - 4.0f, rowY - 34.0f, textW + 8.0f, rowH - 12.0f);
+		ofSetColor(stripe);
+		ofDrawRectangle(textX - 4.0f, rowY - 34.0f, 8.0f, rowH - 12.0f);
+		ofSetColor(done ? ofColor(0, 220, 95) : (active ? ofColor(255, 210, 30) : ofColor(120)));
+		ofDrawCircle(textX + 24.0f, rowY - 2.0f, 16.0f);
+		ofSetColor(12, 14, 16);
+		if (uiFontsLoaded)
+		{
+			uiFontSmall.drawString(done ? "OK" : ofToString(index), textX + (done ? 10.0f : 18.0f), rowY + 5.0f);
+		}
+		else
+		{
+			drawScaledBitmapString(done ? "OK" : ofToString(index), textX + 13.0f, rowY + 3.0f, 1.0f);
+		}
+		drawText(uiFontSmall, label, textX + 60.0f, rowY - 11.0f, done ? ofColor(215, 255, 225) : ofColor(235));
+		if (!detail.empty())
+		{
+			drawText(uiFontSmall, detail, textX + 60.0f, rowY + 28.0f, active ? ofColor(255, 235, 150) : ofColor(175));
+		}
+	};
+
+	if (applicationState == APPLICATION_STATE_CALIBRATING &&
+		(calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+		 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB)))
+	{
+		const int captured = ofClamp(currentCalibPts, 0, 10);
+		const int lowCaptured = ofClamp(captured, 0, 5);
+		const int highCaptured = ofClamp(captured - 5, 0, 5);
+		const bool waitingForRaisedSurface = !waitingForFlattenSand && !upframe && lowCaptured >= 5;
+		drawStep(1, "Flatten and capture base plane", waitingForFlattenSand ? "Waiting for confirmation" : "Complete", !waitingForFlattenSand, waitingForFlattenSand, itemY);
+		drawStep(2, "Low surface calibration points", ofToString(lowCaptured) + " of 5 captured", lowCaptured >= 5, !waitingForFlattenSand && !upframe && lowCaptured < 5, itemY + rowH);
+		drawStep(3, "Raised surface calibration points", waitingForRaisedSurface ? "Place board, then continue" : (upframe ? ofToString(highCaptured) + " of 5 captured" : "Waiting until low points finish"), highCaptured >= 5, waitingForRaisedSurface || (upframe && highCaptured < 5), itemY + rowH * 2.0f);
+		drawStep(4, "Solve projector mapping", autoCalibState == AUTOCALIB_STATE_COMPUTE ? "Computing" : "Not started", projKinectCalibrated, autoCalibState == AUTOCALIB_STATE_COMPUTE, itemY + rowH * 3.0f);
+	}
+	else if (applicationState == APPLICATION_STATE_CALIBRATING && calibrationState == CALIBRATION_STATE_ROI_MANUAL_DETERMINATION)
+	{
+		drawStep(1, "Hardware connected", "Ready", true, false, itemY);
+		drawStep(2, "Draw sand region", "Drag rectangle on the preview", false, true, itemY + rowH);
+		drawStep(3, "Projector calibration", "Next", false, false, itemY + rowH * 2.0f);
+		drawStep(4, "Run sandbox", "After calibration", false, false, itemY + rowH * 3.0f);
+	}
+	else
+	{
+		drawStep(1, "Hardware connected", isRequiredHardwareConnected() ? "Ready" : "Kinect/projector required", isRequiredHardwareConnected(), !isRequiredHardwareConnected(), itemY);
+		drawStep(2, "Sand region defined", ROIcalibrated ? "Ready" : "Draw active sand area", ROIcalibrated, isRequiredHardwareConnected() && !ROIcalibrated, itemY + rowH);
+		drawStep(3, "Projector calibrated", projKinectCalibrated ? "Ready" : "Project target onto sand", projKinectCalibrated, ROIcalibrated && !projKinectCalibrated, itemY + rowH * 2.0f);
+		drawStep(4, "Run sandbox", applicationState == APPLICATION_STATE_RUNNING ? "Running" : "Ready after calibration", applicationState == APPLICATION_STATE_RUNNING, projKinectCalibrated, itemY + rowH * 3.0f);
+	}
+
+	const bool waitingForRaisedSurface =
+		applicationState == APPLICATION_STATE_CALIBRATING &&
+		(calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+		 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB)) &&
+		autoCalibState == AUTOCALIB_STATE_NEXT_POINT &&
+		currentCalibPts >= 5 && !upframe && !waitingForFlattenSand;
+
+	const float buttonY = panelY + panelH - 88.0f;
+	const float buttonW = textW;
+	const float buttonH = 64.0f;
+	if (applicationState == APPLICATION_STATE_CALIBRATING && (waitingForFlattenSand || waitingForRaisedSurface))
+	{
+		const float splitGap = 14.0f;
+		const float primaryW = buttonW * 0.62f;
+		workflowContinueROI.set(textX, buttonY, primaryW, buttonH);
+		workflowCancelROI.set(textX + primaryW + splitGap, buttonY, buttonW - primaryW - splitGap, buttonH);
+		drawWorkflowButton(workflowContinueROI, waitingForRaisedSurface ? "Board is ready  [Enter]" : "Continue calibration  [Enter]", true, ofColor(255, 210, 30));
+		drawWorkflowButton(workflowCancelROI, "Cancel", true, ofColor(82, 92, 102));
+	}
+	else if (applicationState == APPLICATION_STATE_CALIBRATING)
+	{
+		workflowCancelROI.set(textX, buttonY, buttonW, buttonH);
+		drawWorkflowButton(workflowCancelROI, "Cancel calibration", true, ofColor(82, 92, 102));
+	}
+	else if (!isRequiredHardwareConnected())
+	{
+		workflowRecheckROI.set(textX, buttonY, buttonW, buttonH);
+		drawWorkflowButton(workflowRecheckROI, "Recheck hardware", true, ofColor(255, 210, 30));
+	}
+	else if (!ROIcalibrated)
+	{
+		workflowDefineROI.set(textX, buttonY, buttonW, buttonH);
+		drawWorkflowButton(workflowDefineROI, "Define sand region", true, ofColor(255, 210, 30));
+	}
+	else if (!projKinectCalibrated)
+	{
+		workflowCalibrateROI.set(textX, buttonY, buttonW, buttonH);
+		drawWorkflowButton(workflowCalibrateROI, "Calibrate projector", true, ofColor(255, 210, 30));
+	}
+	else
+	{
+		workflowRunROI.set(textX, buttonY, buttonW, buttonH);
+		drawWorkflowButton(workflowRunROI, "Run sandbox", true, ofColor(0, 210, 120));
+	}
+
+	ofPopStyle();
+}
+
+void KinectProjector::drawWorkflowButton(const ofRectangle& rect, const std::string& label, bool enabled, ofColor color)
+{
+	ofPushStyle();
+	ofFill();
+	ofSetColor(enabled ? color : ofColor(80));
+	ofDrawRectangle(rect);
+	ofSetColor(enabled ? ofColor(12, 14, 16) : ofColor(170));
+	if (uiFontsLoaded)
+	{
+		uiFont.drawString(label, rect.x + 20.0f, rect.y + 42.0f);
+	}
+	else
+	{
+		drawScaledBitmapString(label, rect.x + 18.0f, rect.y + 40.0f, 1.5f);
+	}
+	ofPopStyle();
+}
+
+void KinectProjector::drawCalibrationWorkflowPanel(float x, float y, float width, float height)
+{
+	calibrationActionROI.set(0, 0, 0, 0);
+	if (applicationState != APPLICATION_STATE_CALIBRATING)
+	{
+		return;
+	}
+
+	std::string title = "Calibration in progress";
+	std::string body = calibrationText;
+	std::string action = "";
+	bool canAdvance = false;
+
+	if (calibrationState == CALIBRATION_STATE_ROI_MANUAL_DETERMINATION)
+	{
+		title = "Define sand region";
+		body = "Drag across the camera view to frame the active sand area.";
+	}
+	else if (waitingForFlattenSand)
+	{
+		title = "Flatten the sand";
+		body = "Smooth the surface, then continue. The projector should be showing a white field.";
+		action = "Continue calibration";
+		canAdvance = true;
+	}
+	else if (calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
+			 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB))
+	{
+		title = "Projector calibration";
+		if (!imageStabilized)
+		{
+			body = "Hold still while the Kinect image stabilizes.";
+		}
+		else if (autoCalibState == AUTOCALIB_STATE_NEXT_POINT)
+		{
+			body = "Calibration target is visible. When the projected box looks steady, continue to capture this point.";
+			action = "Capture point";
+			canAdvance = true;
+		}
+		else
+		{
+			body = calibrationText;
+		}
+	}
+
+	const float scale = ofClamp(std::min(width / 1100.0f, height / 650.0f), 1.0f, 1.35f);
+	const float pad = 24.0f * scale;
+	const float panelW = std::min(width - pad * 2.0f, 760.0f * scale);
+	const float panelH = canAdvance ? 205.0f * scale : 150.0f * scale;
+	const float panelX = x + pad;
+	const float panelY = y + pad;
+
+	ofPushStyle();
+	ofFill();
+	ofSetColor(12, 15, 18, 238);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+	ofSetColor(255, 210, 30);
+	ofDrawRectangle(panelX, panelY, 8.0f * scale, panelH);
+	ofNoFill();
+	ofSetLineWidth(2);
+	ofSetColor(65, 78, 88);
+	ofDrawRectangle(panelX, panelY, panelW, panelH);
+
+	ofFill();
+	const float textX = panelX + pad + 8.0f * scale;
+	const float textMaxW = panelW - pad * 2.0f - 8.0f * scale;
+	if (uiFontsLoaded)
+	{
+		ofSetColor(255);
+		uiFontLarge.drawString(title, textX, panelY + 44.0f * scale);
+		ofSetColor(220);
+		drawWrappedText(uiFont, body, textX, panelY + 82.0f * scale, textMaxW, 30.0f * scale);
+	}
+	else
+	{
+		ofSetColor(255);
+		drawScaledBitmapString(title, textX, panelY + 34.0f * scale, 2.2f * scale);
+		ofSetColor(220);
+		drawScaledBitmapString(body, textX, panelY + 72.0f * scale, 1.6f * scale);
+	}
+
+	if (canAdvance)
+	{
+		const float buttonW = std::min(panelW - pad * 2.0f - 8.0f * scale, 420.0f * scale);
+		const float buttonH = 54.0f * scale;
+		const float buttonX = textX;
+		const float buttonY = panelY + panelH - pad - buttonH;
+		calibrationActionROI.set(buttonX, buttonY, buttonW, buttonH);
+
+		ofFill();
+		ofSetColor(255, 210, 30);
+		ofDrawRectangle(calibrationActionROI);
+		ofSetColor(12);
+		if (uiFontsLoaded)
+		{
+			uiFont.drawString(action + "  [Enter]", buttonX + 18.0f * scale, buttonY + 36.0f * scale);
+		}
+		else
+		{
+			drawScaledBitmapString(action + "  [Enter]", buttonX + 18.0f * scale, buttonY + 34.0f * scale, 1.7f * scale);
+		}
+	}
+	ofPopStyle();
+}
+
+float KinectProjector::drawWrappedText(ofTrueTypeFont& font, const std::string& text, float x, float y, float maxWidth, float lineHeight)
+{
+	std::istringstream words(text);
+	std::string word;
+	std::string line;
+	float cursorY = y;
+
+	while (words >> word)
+	{
+		const std::string testLine = line.empty() ? word : line + " " + word;
+		if (!line.empty() && font.stringWidth(testLine) > maxWidth)
+		{
+			font.drawString(line, x, cursorY);
+			cursorY += lineHeight;
+			line = word;
+		}
+		else
+		{
+			line = testLine;
+		}
+	}
+
+	if (!line.empty())
+	{
+		font.drawString(line, x, cursorY);
+		cursorY += lineHeight;
+	}
+
+	return cursorY - y;
 }
 
 void KinectProjector::drawHardwareStatusPanel()
@@ -1743,39 +2479,45 @@ ofVec2f KinectProjector::gradientAtKinectCoord(float x, float y){
 void KinectProjector::setupGui(){
     // instantiate and position the gui //
     gui = new ofxDatGui( ofxDatGuiAnchor::TOP_RIGHT );
-	gui->addButton("RUN!")->setName("Start Application");
+
+	gui->addHeader(":: Startup ::", false);
 	gui->addButton("Recheck Hardware");
 	gui->addDropdown("Projector Display", { "Detecting projector displays" });
+
 	gui->addBreak();
+
+	gui->addHeader(":: Calibration ::", false);
 	gui->addButton("Define Sand Region");
 	gui->addButton("Calibrate Projector");
+	gui->addButton("Auto Adjust ROI");
+	gui->addToggle("Show ROI on Sand", doShowROIonProjector)->setName("Show ROI on sand");
 	gui->addButton("Full Calibration");
+
 	gui->addBreak();
-    gui->addFRM();
+
+	gui->addHeader(":: Run + Play ::", false);
+	gui->addButton("RUN!")->setName("Start Application");
+	gui->addFRM();
 	fpsKinectText = gui->addTextInput("Kinect FPS", "0");
-    gui->addBreak();
-    
-    auto advancedFolder = gui->addFolder("Advanced", ofColor::purple);
-    advancedFolder->addToggle("Kinect depth view", drawKinectView)->setName("Draw kinect depth view");
-	advancedFolder->addToggle("Kinect color view", drawKinectColorView)->setName("Draw kinect color view");
-	advancedFolder->addToggle("Dump Debug", DumpDebugFiles);
-	advancedFolder->addSlider("Ceiling", -300, 300, 0);
-    advancedFolder->addToggle("Spatial filtering", spatialFiltering);
-	advancedFolder->addToggle("Inpaint outliers", doInpainting);
-	advancedFolder->addToggle("Full Frame Filtering", doFullFrameFiltering);
-	advancedFolder->addToggle("Quick reaction", followBigChanges);
-    advancedFolder->addSlider("Averaging", 1, 40, numAveragingSlots)->setPrecision(0);
-	advancedFolder->addSlider("Tilt X", -30, 30, 0);
-	advancedFolder->addSlider("Tilt Y", -30, 30, 0);
-	advancedFolder->addSlider("Vertical offset", -100, 100, 0);
-	advancedFolder->addButton("Reset sea level");
-	advancedFolder->addBreak();
+
+	gui->addBreak();
+
+	auto viewFolder = gui->addFolder("View + Debug", ofColor::purple);
+	viewFolder->addToggle("Kinect depth view", drawKinectView)->setName("Draw kinect depth view");
+	viewFolder->addToggle("Kinect color view", drawKinectColorView)->setName("Draw kinect color view");
+	viewFolder->addToggle("Dump Debug", DumpDebugFiles);
 	
-	auto calibrationFolder = gui->addFolder("Calibration", ofColor::darkCyan);
-	calibrationFolder->addButton("Manually define sand region");
-	calibrationFolder->addButton("Automatically calibrate kinect & projector");
-	calibrationFolder->addButton("Auto Adjust ROI");
-	calibrationFolder->addToggle("Show ROI on sand", doShowROIonProjector);
+	auto tuningFolder = gui->addFolder("Advanced Tuning", ofColor::darkCyan);
+	tuningFolder->addSlider("Ceiling", -300, 300, 0);
+	tuningFolder->addToggle("Spatial filtering", spatialFiltering);
+	tuningFolder->addToggle("Inpaint outliers", doInpainting);
+	tuningFolder->addToggle("Full Frame Filtering", doFullFrameFiltering);
+	tuningFolder->addToggle("Quick reaction", followBigChanges);
+	tuningFolder->addSlider("Averaging", 1, 40, numAveragingSlots)->setPrecision(0);
+	tuningFolder->addSlider("Tilt X", -30, 30, 0);
+	tuningFolder->addSlider("Tilt Y", -30, 30, 0);
+	tuningFolder->addSlider("Vertical offset", -100, 100, 0);
+	tuningFolder->addButton("Reset sea level");
 
 	//	advancedFolder->addButton("Draw ROI")->setName("Draw ROI");
  //   advancedFolder->addButton("Calibrate")->setName("Full Calibration");
@@ -1784,10 +2526,6 @@ void KinectProjector::setupGui(){
 //    calibrationFolder->addButton("Manually define sand region");
 //    gui->addButton("Automatically calibrate kinect & projector");
 //    calibrationFolder->addButton("Manually calibrate kinect & projector");
-    
-//    gui->addBreak();
-    gui->addHeader(":: Settings ::", false);
-    
     // once the gui has been assembled, register callbacks to listen for component specific events //
     gui->onButtonEvent(this, &KinectProjector::onButtonEvent);
     gui->onToggleEvent(this, &KinectProjector::onToggleEvent);
@@ -1798,15 +2536,15 @@ void KinectProjector::setupGui(){
 	gui->setAutoDraw(false);
 
 	StatusGUI = new ofxDatGui(ofxDatGuiAnchor::BOTTOM_LEFT);
-	StatusGUI->addLabel("Hardware Status");
+	StatusGUI->addHeader(":: Current Status ::", false);
+	StatusGUI->addLabel("Calibration Step");
 	StatusGUI->addLabel("Application Status");
+	StatusGUI->addLabel("Hardware Status");
 	StatusGUI->addLabel("Kinect Status");
 	StatusGUI->addLabel("ROI Status");
 	StatusGUI->addLabel("Baseplane Status");
 	StatusGUI->addLabel("Calibration Status");
-	StatusGUI->addLabel("Calibration Step");
 	StatusGUI->addLabel("Projector Status");
-	StatusGUI->addHeader(":: Status ::", false);
 	StatusGUI->setAutoDraw(false);
 	refreshProjectorDisplayOptions();
 	updateGuiLayout();
@@ -1826,10 +2564,10 @@ void KinectProjector::updateGuiLayout()
 	const int controlInset = static_cast<int>(ofClamp(viewportW * 0.014f, 12.0f, 20.0f));
 	const int scrollbarGutter = 14;
 	const bool twoColumn = viewportW >= 980;
-	const int fontSize = static_cast<int>(ofClamp(std::round(std::min(viewportW / 150.0f, viewportH / 80.0f)), 9.0f, 11.0f));
+	const int fontSize = static_cast<int>(ofClamp(std::round(std::min(viewportW / 115.0f, viewportH / 60.0f)), 13.0f, 16.0f));
 	const int rightSectionW = static_cast<int>(
 		twoColumn
-			? ofClamp(viewportW * 0.34f, 380.0f, 560.0f)
+			? ofClamp(viewportW * 0.36f, 480.0f, 660.0f)
 			: viewportW - margin * 2.0f);
 	const int controlPanelW = static_cast<int>(
 		twoColumn
@@ -1992,6 +2730,7 @@ void KinectProjector::startFullCalibration()
 		return;
 	}
 
+	resetProjectorCalibrationAttempt();
 	applicationState = APPLICATION_STATE_CALIBRATING;
     calibrationState = CALIBRATION_STATE_FULL_AUTO_CALIBRATION;
     fullCalibState = FULL_CALIBRATION_STATE_ROI_DETERMINATION;
@@ -2004,6 +2743,7 @@ void KinectProjector::startFullCalibration()
 }
 
 void KinectProjector::startAutomaticROIDetection(){
+	resetProjectorCalibrationAttempt();
 	applicationState = APPLICATION_STATE_CALIBRATING;
     calibrationState = CALIBRATION_STATE_ROI_AUTO_DETERMINATION;
     ROICalibState = ROI_CALIBRATION_STATE_INIT;
@@ -2019,21 +2759,26 @@ void KinectProjector::startAutomaticKinectProjectorCalibration(){
 	if (!kinectOpened)
 	{
 		ofLogVerbose("KinectProjector") << "startAutomaticKinectProjectorCalibration(): Kinect not running";
+		calibrationText = "Cannot calibrate projector: Kinect not running";
+		updateStatusGUI();
 		return;
 	}
 	if (applicationState == APPLICATION_STATE_CALIBRATING)
 	{
-		applicationState = APPLICATION_STATE_SETUP;
-		calibrationText = "Terminated before completion";
+		ofLogVerbose("KinectProjector") << "startAutomaticKinectProjectorCalibration(): already calibrating";
+		calibrationText = "Finish current calibration first";
 		updateStatusGUI();
 		return;
 	}
 	if (!ROIcalibrated)
 	{
 		ofLogVerbose("KinectProjector") << "startAutomaticKinectProjectorCalibration(): ROI not defined";
+		calibrationText = "Define sand region before projector calibration";
+		updateStatusGUI();
 		return;
 	}
 
+	resetProjectorCalibrationAttempt();
 	calibrationText = "Starting projector/kinect calibration";
 
 	applicationState = APPLICATION_STATE_CALIBRATING;
@@ -2252,21 +2997,7 @@ void KinectProjector::onConfirmModalEvent(ofxModalEvent e)
     }
 	else if (e.type == ofxModalEvent::CONFIRM)
 	{
-		if (applicationState == APPLICATION_STATE_CALIBRATING)
-		{
-            if (waitingForFlattenSand)
-			{
-                waitingForFlattenSand = false;
-            }  
-			else if ((calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION || (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB))
-                        && autoCalibState == AUTOCALIB_STATE_NEXT_POINT)
-			{
-                if (!upframe)
-				{
-                    upframe = true;
-                }
-            }
-        }
+		advanceCalibrationPrompt();
         ofLogVerbose("KinectProjector") << "Modal confirm button pressed" ;
     }
 }

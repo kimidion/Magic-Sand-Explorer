@@ -37,9 +37,10 @@ public:
 	~KinectGrabber();
     void start();
     void stop();
-    void performInThread(std::function<void(KinectGrabber&)> action);
+	void performInThread(std::function<void(KinectGrabber&)> action);
 	bool setup();
 	bool openKinect();
+	bool rescanKinect();
 	std::string getCameraName() const;
 	DepthCameraType getCameraType() const;
 	void setupFramefilter(int gradFieldresolution, float newMaxOffset, ofRectangle ROI, bool spatialFilter, bool followBigChange, int numAveragingSlots);
@@ -103,6 +104,7 @@ public:
     
 private:
 	void threadedFunction() override;
+	void releaseBuffers();
     void filter();
     bool isInsideROI(int x, int y); // test is x, y is inside ROI
     void applySpaceFilter();

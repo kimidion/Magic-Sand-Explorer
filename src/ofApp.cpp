@@ -116,6 +116,14 @@ void ofApp::keyPressed(int key)
 			kinectProjector->startApplication();
 		}
 	}
+	else if (key == OF_KEY_RETURN || key == 10 || key == 13)
+	{
+		kinectProjector->advanceCalibrationPrompt();
+	}
+	else if (key == OF_KEY_ESC)
+	{
+		kinectProjector->cancelCalibration("Calibration cancelled. Adjust camera/projector, then try again.");
+	}
 	else if (key == 'f' || key == 'r')
 	{
 		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
@@ -176,6 +184,11 @@ void ofApp::mouseMoved(int x, int y) {
 
 void ofApp::mouseDragged(int x, int y, int button) {
 
+	if (kinectProjector->handleWorkflowPreviewMouseDragged(x, y, button))
+	{
+		return;
+	}
+
 	// We assume that we only use this during ROI annotation
 	ofVec2f previewPoint = windowToKinectPreview(x, y);
 	kinectProjector->mouseDragged(previewPoint.x, previewPoint.y, button);
@@ -183,6 +196,21 @@ void ofApp::mouseDragged(int x, int y, int button) {
 
 void ofApp::mousePressed(int x, int y, int button) 
 {
+	if (kinectProjector->handleWorkflowClick(x, y))
+	{
+		return;
+	}
+
+	if (kinectProjector->handleCalibrationClick(x, y))
+	{
+		return;
+	}
+
+	if (kinectProjector->handleWorkflowPreviewMousePressed(x, y, button))
+	{
+		return;
+	}
+
 	if (mainWindowROI.inside((float)x, (float)y))
 	{
 		ofVec2f previewPoint = windowToKinectPreview(x, y);
@@ -191,6 +219,11 @@ void ofApp::mousePressed(int x, int y, int button)
 }
 
 void ofApp::mouseReleased(int x, int y, int button) {
+	if (kinectProjector->handleWorkflowPreviewMouseReleased(x, y, button))
+	{
+		return;
+	}
+
 	// We assume that we only use this during ROI annotation
 	ofVec2f previewPoint = windowToKinectPreview(x, y);
 	kinectProjector->mouseReleased(previewPoint.x, previewPoint.y, button);
@@ -234,7 +267,7 @@ void ofApp::updateMainWindowLayout()
 	const float margin = ofClamp(ofGetWidth() * 0.025f, 16.0f, 32.0f);
 	const float sectionGap = ofClamp(ofGetWidth() * 0.018f, 14.0f, 24.0f);
 	const float innerPad = ofClamp(ofGetWidth() * 0.014f, 12.0f, 20.0f);
-	const float guiReserve = ofClamp(ofGetWidth() * 0.34f, 380.0f, 560.0f);
+	const float guiReserve = ofClamp(ofGetWidth() * 0.36f, 480.0f, 660.0f);
 	const bool twoColumn = ofGetWidth() >= 980;
 
 	if (twoColumn)

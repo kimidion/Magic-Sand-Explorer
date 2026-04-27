@@ -40,8 +40,8 @@ bool setWindowDimensions(ofGLFWWindowSettings& settings, int windowsNum) {
 		if (windowsNum == 0)
 		{
 			// Keep the control window large enough for readable setup controls.
-			const int width = std::min(desktopMode->width - 40, std::max(1700, static_cast<int>(desktopMode->width * 0.96f)));
-			const int height = std::min(desktopMode->height - 60, std::max(1000, static_cast<int>(desktopMode->height * 0.94f)));
+			const int width = std::min(desktopMode->width - 20, std::max(1900, static_cast<int>(desktopMode->width * 0.98f)));
+			const int height = std::min(desktopMode->height - 40, std::max(1100, static_cast<int>(desktopMode->height * 0.96f)));
 			settings.setSize(width, height);
 			settings.setPosition(ofVec2f(xM + (desktopMode->width - width) / 2, yM + (desktopMode->height - height) / 2));
 		}
@@ -55,7 +55,7 @@ bool setWindowDimensions(ofGLFWWindowSettings& settings, int windowsNum) {
 		return true;
 	}
 	else {
-		settings.setSize(1700, 1000); // Default settings
+		settings.setSize(1900, 1200); // Default settings
 		settings.setPosition(ofVec2f(0, 0));
 		return false;
 	}
@@ -69,12 +69,15 @@ int main() {
 	//settings.width = 1200;
  //	settings.height = 600;
 	setWindowDimensions(settings, 0);
+	settings.windowMode = OF_WINDOW;
 	settings.resizable = true;
 	settings.decorated = true;
 	settings.title = "Magic-Sand " + MagicSandVersion;
 	shared_ptr<ofAppBaseWindow> mainWindow = ofCreateWindow(settings);
     
 	bool projectorDisplayDetected = setWindowDimensions(settings, 1);
+	settings.monitor = 1;
+	settings.windowMode = projectorDisplayDetected ? OF_FULLSCREEN : OF_WINDOW;
 	settings.resizable = false;
 	settings.decorated = false;
 	settings.shareContextWith = mainWindow;

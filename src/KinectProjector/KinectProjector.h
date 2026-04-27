@@ -108,6 +108,13 @@ public:
 	void mousePressed(int x, int y, int button);
 	void mouseReleased(int x, int y, int button);
 	void mouseDragged(int x, int y, int button);
+	bool handleCalibrationClick(float x, float y);
+	bool handleWorkflowClick(float x, float y);
+	bool handleWorkflowPreviewMousePressed(float x, float y, int button);
+	bool handleWorkflowPreviewMouseDragged(float x, float y, int button);
+	bool handleWorkflowPreviewMouseReleased(float x, float y, int button);
+	bool advanceCalibrationPrompt();
+	void cancelCalibration(const std::string& reason = "Calibration cancelled");
 
     // Functions for shaders
     void bind(){
@@ -240,6 +247,7 @@ private:
     void updateKinectGrabberROI(ofRectangle ROI);
 
 	void updateProjKinectAutoCalibration();
+	void resetProjectorCalibrationAttempt();
 
 	double ComputeReprojectionError(bool WriteFile);
 	void CalibrateNextPoint();
@@ -260,6 +268,11 @@ private:
 	void ProcessChessBoardInput(ofxCvGrayscaleImage& image);
 	void CheckAndNormalizeKinectROI();
 	void drawHardwareStatusPanel();
+	void drawSetupWorkflowScreen(float x, float y, float width, float height);
+	void drawCalibrationWorkflowPanel(float x, float y, float width, float height);
+	void drawWorkflowButton(const ofRectangle& rect, const std::string& label, bool enabled, ofColor color);
+	float drawWrappedText(ofTrueTypeFont& font, const std::string& text, float x, float y, float maxWidth, float lineHeight);
+	bool workflowScreenToKinect(float x, float y, ofVec2f& kinectPoint, bool clampToPreview = false) const;
 	void recheckHardwareConnections();
 	void onMouseScrolled(ofMouseEventArgs& e);
 
@@ -307,8 +320,21 @@ private:
     ofVec2f kinectRes;
 
     // FBos
-    ofFbo fboProjWindow;
+	ofFbo fboProjWindow;
     ofFbo fboMainWindow;
+	ofRectangle calibrationActionROI;
+	ofRectangle workflowRecheckROI;
+	ofRectangle workflowDefineROI;
+	ofRectangle workflowCalibrateROI;
+	ofRectangle workflowRunROI;
+	ofRectangle workflowContinueROI;
+	ofRectangle workflowCancelROI;
+	ofRectangle workflowPreviewROI;
+	bool workflowPreviewDragActive = false;
+	ofTrueTypeFont uiFontSmall;
+	ofTrueTypeFont uiFont;
+	ofTrueTypeFont uiFontLarge;
+	bool uiFontsLoaded = false;
 
     //Images and cv matrixes
     cv::Mat                     cvRgbImage;
@@ -353,7 +379,7 @@ private:
     float maxOffsetBack;
     
     // Autocalib points
-    ofPoint* autoCalibPts; // Center of autocalib chess boards
+	std::vector<ofPoint> autoCalibPts; // Center of autocalib chess boards
     int currentCalibPts;
     int trials;
     bool upframe;
