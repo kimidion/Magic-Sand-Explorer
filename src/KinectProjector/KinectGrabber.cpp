@@ -21,7 +21,12 @@ General Public License for more details.
 
 #include "KinectGrabber.h"
 #include "KinectV1DepthCamera.h"
+#ifndef MAGIC_SAND_ENABLE_KINECT_V2
+#define MAGIC_SAND_ENABLE_KINECT_V2 0
+#endif
+#if MAGIC_SAND_ENABLE_KINECT_V2
 #include "KinectV2DepthCamera.h"
+#endif
 #include "ofConstants.h"
 
 KinectGrabber::KinectGrabber()
@@ -67,7 +72,7 @@ bool KinectGrabber::setup(){
 	ROIAverageValue = 0;
 	setToGlobalAvg = 0;
 	setToLocalAvg = 0;
-	doInPaint = 0;
+	doInPaint = true;
 	doFullFrameFiltering = false;
 
 	vector<DepthCameraType> cameraTypes;
@@ -93,7 +98,11 @@ bool KinectGrabber::setup(){
 		}
 		else if (cameraType == DepthCameraType::KinectV2)
 		{
+#if MAGIC_SAND_ENABLE_KINECT_V2
 			candidateCamera = std::make_unique<KinectV2DepthCamera>();
+#else
+			ofLogWarning("kinectGrabber") << "Kinect v2 requested, but this build was compiled for Kinect 360/v1 only";
+#endif
 		}
 
 		if (candidateCamera && candidateCamera->setup())
@@ -430,7 +439,7 @@ void KinectGrabber::filter()
                         *filteredFramePtr = *validBufferPtr;
                     }
                 }
-                *filteredFramePtr = *validBufferPtr;
+				*filteredFramePtr = (*validBufferPtr == initialValue) ? 0.0f : *validBufferPtr;
 			}
             inputFramePtr += width-maxX;
             averagingBufferPtr += width-maxX;
@@ -492,28 +501,41 @@ void KinectGrabber::setFullFrameFiltering(bool ff, ofRectangle ROI)
 
 void KinectGrabber::applySpaceFilter()
 {
+	if (width < 2 || height < 2)
+	{
+		return;
+	}
+
+	const int left = ofClamp(minX, 0, static_cast<int>(width) - 1);
+	const int right = ofClamp(maxX, left + 1, static_cast<int>(width));
+	const int top = ofClamp(minY, 0, static_cast<int>(height) - 1);
+	const int bottom = ofClamp(maxY, top + 1, static_cast<int>(height));
+
+	if (right - left < 2 || bottom - top < 2)
+	{
+		return;
+	}
+
+	float* data = filteredframe.getData();
     for(int filterPass=0;filterPass<2;++filterPass)
     {
-		// Pointer to first pixel of ROI
-		float *ptrOffset = filteredframe.getData() + minY * width + minX;
-
         // Low-pass filter the values in the ROI
-		// First a horisontal pass
-        for(unsigned int x = 0; x < width; x++)
-        {
-			// Pointer to current pixel
-            float* colPtr = ptrOffset + x;
-			float lastVal = *colPtr;
+		// First a horizontal pass through ROI columns.
+	        for(int x = left; x < right; x++)
+	        {
+				// Pointer to current pixel
+	            float* colPtr = data + top * width + x;
+				float lastVal = *colPtr;
 
             // Top border pixels 
             *colPtr = (colPtr[0]*2.0f + colPtr[width]) / 3.0f;
             colPtr += width;
             
             // Filter the interior pixels in the column
-            for(unsigned int y = minY+1; y < maxY-1; ++y, colPtr += width)
-            {
-				float nextLastVal = *colPtr;
-                *colPtr=(lastVal + colPtr[0]*2.0f + colPtr[width])*0.25f;
+	            for(int y = top + 1; y < bottom - 1; ++y, colPtr += width)
+	            {
+					float nextLastVal = *colPtr;
+	                *colPtr=(lastVal + colPtr[0]*2.0f + colPtr[width])*0.25f;
 				lastVal = nextLastVal; // To avoid using already updated pixels
             }
             
@@ -521,11 +543,11 @@ void KinectGrabber::applySpaceFilter()
             *colPtr=(lastVal + colPtr[0] * 2.0f)/3.0f;
         }
 
-		// then a vertical pass
-        for(unsigned int y = 0; y < height; y++)
-        {
-			// Pointer to current pixel
-			float* rowPtr = ptrOffset + y * width;
+		// Then a vertical pass through ROI rows.
+	        for(int y = top; y < bottom; y++)
+	        {
+				// Pointer to current pixel
+				float* rowPtr = data + y * width + left;
 			
 			// Filter the first pixel in the row: 
             float lastVal=*rowPtr;
@@ -533,9 +555,9 @@ void KinectGrabber::applySpaceFilter()
             rowPtr++;
        
             // Filter the interior pixels in the row: 
-            for(unsigned int x = minX+1; x < maxX-1; ++x,++rowPtr)
-            {
-                float nextLastVal=*rowPtr;
+	            for(int x = left + 1; x < right - 1; ++x,++rowPtr)
+	            {
+	                float nextLastVal=*rowPtr;
                 *rowPtr=(lastVal+rowPtr[0]*2.0f+rowPtr[1])*0.25f;
                 lastVal=nextLastVal;
             }
@@ -601,7 +623,7 @@ float KinectGrabber::findInpaintValue(float *data, int x, int y)
 	double sumval = 0;
 	for (int y = tminy; y < tmaxy; y++)
 	{
-		for (int x = tminx; x < tmaxy; x++)
+		for (int x = tminx; x < tmaxx; x++)
 		{
 			int idx = y * width + x;
 			float val = data[idx];
@@ -639,10 +661,14 @@ void KinectGrabber::applySimpleOutlierInpainting()
 			}
 		}
 	}
-	// No valid samples found in ROI - strange situation
+	// No valid samples found in ROI. Leave invalid pixels empty instead of
+	// inventing an average; bright/reflective sand can briefly create this.
 	if (samples == 0)
-		ROIAverageValue = initialValue;
-	
+	{
+		ROIAverageValue = 0;
+		return;
+	}
+
 	ROIAverageValue /= samples;
 
 	setToLocalAvg = 0;

@@ -24,11 +24,13 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***********************************************************************/
 
 #include "SandSurfaceRenderer.h"
+#include <algorithm>
 
 using namespace ofxCSG;
 
 SandSurfaceRenderer::SandSurfaceRenderer(std::shared_ptr<KinectProjector> const& k, std::shared_ptr<ofAppBaseWindow> const& p)
 :settingsLoaded(false),
+legacyGuiVisible(true),
 editColorMap(false){
     kinectProjector = k;
     projWindow = p;
@@ -222,7 +224,7 @@ void SandSurfaceRenderer::update(){
     drawSandbox();
     
     // GUI
-	if (displayGui) {
+	if (displayGui && legacyGuiVisible) {
 		gui->update();
 		gui2->update();
         if (editColorMap){
@@ -235,7 +237,7 @@ void SandSurfaceRenderer::update(){
 void SandSurfaceRenderer::drawMainWindow(float x, float y, float width, float height){
     fboProjWindow.draw(x, y, width, height);
     
-    if (displayGui) {
+    if (displayGui && legacyGuiVisible) {
         heightMap.getTexture().draw(gui2->getPosition().x, gui2->getPosition().y+gui2->getHeight(), gui2->getWidth(), 30);
 		gui->draw();
 		gui2->draw();
@@ -244,6 +246,232 @@ void SandSurfaceRenderer::drawMainWindow(float x, float y, float width, float he
             colorList->draw();
         }
 	}
+}
+
+void SandSurfaceRenderer::setLegacyGuiVisible(bool visible)
+{
+	legacyGuiVisible = visible;
+}
+
+const std::string& SandSurfaceRenderer::getColorMapFile() const
+{
+	return colorMapFile;
+}
+
+const std::vector<std::string>& SandSurfaceRenderer::getColorMapFilesList() const
+{
+	return colorMapFilesList;
+}
+
+int SandSurfaceRenderer::getColorMapFileIndex() const
+{
+	auto it = std::find(colorMapFilesList.begin(), colorMapFilesList.end(), colorMapFile);
+	if (it == colorMapFilesList.end())
+	{
+		return -1;
+	}
+	return static_cast<int>(std::distance(colorMapFilesList.begin(), it));
+}
+
+void SandSurfaceRenderer::selectColorMap(int index, bool saveSelection)
+{
+	if (colorMapFilesList.empty())
+	{
+		return;
+	}
+	index = ofClamp(index, 0, static_cast<int>(colorMapFilesList.size()) - 1);
+	colorMapFile = colorMapFilesList[index];
+	heightMap.loadFile(colorMapPath + colorMapFile);
+		if (displayGui && legacyGuiVisible && colorList != nullptr)
+		{
+			populateColorList();
+			if (gui2 != nullptr && gui2->getDropdown("Load Color Map") != nullptr)
+		{
+			gui2->getDropdown("Load Color Map")->select(index);
+		}
+	}
+	if (saveSelection)
+	{
+		saveSettings();
+	}
+}
+
+void SandSurfaceRenderer::selectNextColorMap(int direction, bool saveSelection)
+{
+	if (colorMapFilesList.empty())
+	{
+		return;
+	}
+	int index = getColorMapFileIndex();
+	if (index < 0)
+	{
+		index = 0;
+	}
+	index = (index + direction + static_cast<int>(colorMapFilesList.size())) % static_cast<int>(colorMapFilesList.size());
+	selectColorMap(index, saveSelection);
+}
+
+void SandSurfaceRenderer::resetColorMap()
+{
+	if (colorMapFile.empty())
+	{
+		return;
+	}
+	heightMap.loadFile(colorMapPath + colorMapFile);
+		if (displayGui && legacyGuiVisible && colorList != nullptr)
+		{
+			populateColorList();
+		}
+}
+
+void SandSurfaceRenderer::saveCurrentColorMap()
+{
+	if (!colorMapFile.empty())
+	{
+		heightMap.saveFile(colorMapPath + colorMapFile);
+		saveSettings();
+	}
+}
+
+float SandSurfaceRenderer::getHeightMapScale() const
+{
+	return heightMapScale;
+}
+
+float SandSurfaceRenderer::getHeightMapOffset() const
+{
+	return heightMapOffset;
+}
+
+void SandSurfaceRenderer::setHeightMapScale(float scale)
+{
+	heightMapScale = ofClamp(scale, 0.0001f, 20.0f);
+}
+
+void SandSurfaceRenderer::setHeightMapOffset(float offset)
+{
+	heightMapOffset = ofClamp(offset, -10.0f, 10.0f);
+}
+
+bool SandSurfaceRenderer::getDrawContourLines() const
+{
+	return drawContourLines;
+}
+
+void SandSurfaceRenderer::setDrawContourLines(bool draw)
+{
+	drawContourLines = draw;
+	if (displayGui && legacyGuiVisible && gui2 != nullptr && gui2->getToggle("Contour lines") != nullptr)
+	{
+		gui2->getToggle("Contour lines")->setChecked(drawContourLines);
+	}
+}
+
+float SandSurfaceRenderer::getContourLineDistance() const
+{
+	return contourLineDistance;
+}
+
+void SandSurfaceRenderer::setContourLineDistance(float distance)
+{
+	contourLineDistance = ofClamp(distance, 1.0f, 30.0f);
+	contourLineFactor = contourLineFboScale / contourLineDistance;
+	if (displayGui && legacyGuiVisible && gui2 != nullptr && gui2->getSlider("Contour lines distance") != nullptr)
+	{
+		gui2->getSlider("Contour lines distance")->setValue(contourLineDistance);
+	}
+}
+
+std::vector<ColorMap::HeightMapKey> SandSurfaceRenderer::getHeightMapKeys() const
+{
+	return heightMap.getKeys();
+}
+
+int SandSurfaceRenderer::getSelectedColorIndex() const
+{
+	return selectedColor;
+}
+
+void SandSurfaceRenderer::selectColorKey(int uiIndex)
+{
+	if (heightMap.size() <= 0)
+	{
+		selectedColor = 0;
+		return;
+	}
+	uiIndex = ofClamp(uiIndex, 0, heightMap.size() - 1);
+		if (displayGui && legacyGuiVisible && colorList != nullptr)
+	{
+		onScrollViewEvent(ofxDatGuiScrollViewEvent(colorList, colorList->getItemAtIndex(uiIndex)));
+	}
+	else
+	{
+		selectedColor = uiIndex;
+	}
+}
+
+void SandSurfaceRenderer::moveSelectedColor(int direction)
+{
+	int i = selectedColor;
+	int j = heightMap.size() - 1 - i;
+	if (direction < 0 && i > 0)
+	{
+		heightMap.swapKeys(j, j + 1);
+		selectColorKey(i - 1);
+	}
+	else if (direction > 0 && j > 0)
+	{
+		heightMap.swapKeys(j, j - 1);
+		selectColorKey(i + 1);
+	}
+}
+
+void SandSurfaceRenderer::insertColorAfterSelected()
+{
+	if (heightMap.size() <= 0)
+	{
+		return;
+	}
+	int j = heightMap.size() - 1 - selectedColor;
+	float newheight = (j > 0) ? (heightMap[j - 1].height + heightMap[j].height) * 0.5f : heightMap[j].height + 1.0f;
+	heightMap.addKey(heightMap[j].color, newheight);
+		if (displayGui && legacyGuiVisible && colorList != nullptr)
+	{
+		populateColorList();
+	}
+	selectColorKey(std::min(selectedColor + 1, heightMap.size() - 1));
+}
+
+void SandSurfaceRenderer::removeSelectedColor()
+{
+	if (heightMap.size() <= 1)
+	{
+		return;
+	}
+	int j = heightMap.size() - 1 - selectedColor;
+	heightMap.removeKey(j);
+		if (displayGui && legacyGuiVisible && colorList != nullptr)
+	{
+		populateColorList();
+	}
+	selectColorKey(std::min(selectedColor, heightMap.size() - 1));
+}
+
+void SandSurfaceRenderer::setSelectedColorHeight(float height)
+{
+	if (heightMap.size() <= 0)
+	{
+		return;
+	}
+	int j = heightMap.size() - 1 - selectedColor;
+	float minHeight = (j > 0) ? heightMap[j - 1].height : heightMap[j].height - 100.0f;
+	float maxHeight = (j < heightMap.size() - 1) ? heightMap[j + 1].height : heightMap[j].height + 100.0f;
+	heightMap.setHeightKey(j, ofClamp(height, minHeight, maxHeight));
+	if (displayGui && legacyGuiVisible && colorList != nullptr)
+	{
+		populateColorList();
+	}
+	selectColorKey(selectedColor);
 }
 
 void SandSurfaceRenderer::drawProjectorWindow(){
@@ -530,4 +758,3 @@ bool SandSurfaceRenderer::saveSettings(){
     settings.appendChild("contourLineDistance").set(contourLineDistance);
     return xml.save(settingsFile);
 }
-

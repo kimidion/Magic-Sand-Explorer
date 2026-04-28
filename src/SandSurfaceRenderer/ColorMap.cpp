@@ -122,7 +122,7 @@ ColorMap::HeightMapKey ColorMap::operator[](int scalar) const
     return heightMapKeys[scalar];
 }
 
-ofTexture ColorMap::getTexture(void)  // return color map texture
+ofTexture& ColorMap::getTexture(void)  // return color map texture
 {
     return tex.getTexture();
 }

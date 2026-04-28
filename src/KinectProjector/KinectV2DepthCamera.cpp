@@ -1,4 +1,6 @@
 #include "KinectV2DepthCamera.h"
+
+#if MAGIC_SAND_ENABLE_KINECT_V2
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -17,6 +19,8 @@ bool KinectV2DepthCamera::setup()
 {
 	depthPixels.allocate(getWidth(), getHeight(), 1);
 	depthPixels.set(0);
+	lastValidDepthPixels.allocate(getWidth(), getHeight(), 1);
+	lastValidDepthPixels.set(0);
 	colorPixels.allocate(getWidth(), getHeight(), OF_PIXELS_RGB);
 	colorPixels.set(0);
 	setupComplete = true;
@@ -90,19 +94,21 @@ void KinectV2DepthCamera::update()
 		unsigned short* out = depthPixels.getData();
 		const size_t pixelCount = depthFrame->width * depthFrame->height;
 
-		for (size_t i = 0; i < pixelCount; ++i)
-		{
-			float depth = depthData[i];
-			if (!std::isfinite(depth) || depth <= 0)
+			unsigned short* lastValid = lastValidDepthPixels.getData();
+			for (size_t i = 0; i < pixelCount; ++i)
 			{
-				out[i] = 0;
+				float depth = depthData[i];
+				if (!std::isfinite(depth) || depth <= 0)
+				{
+					out[i] = lastValid[i];
+				}
+				else
+				{
+					depth = std::min(depth, static_cast<float>(std::numeric_limits<unsigned short>::max()));
+					out[i] = static_cast<unsigned short>(depth);
+					lastValid[i] = out[i];
+				}
 			}
-			else
-			{
-				depth = std::min(depth, static_cast<float>(std::numeric_limits<unsigned short>::max()));
-				out[i] = static_cast<unsigned short>(depth);
-			}
-		}
 		frameNew = true;
 	}
 
@@ -214,3 +220,82 @@ ofMatrix4x4 KinectV2DepthCamera::getWorldMatrix() const
 	}
 	return mat;
 }
+#else
+KinectV2DepthCamera::~KinectV2DepthCamera()
+{
+	close();
+}
+
+std::string KinectV2DepthCamera::getName() const
+{
+	return "Kinect v2 disabled";
+}
+
+bool KinectV2DepthCamera::setup()
+{
+	depthPixels.allocate(getWidth(), getHeight(), 1);
+	depthPixels.set(0);
+	colorPixels.allocate(getWidth(), getHeight(), OF_PIXELS_RGB);
+	colorPixels.set(0);
+	setupComplete = true;
+	return true;
+}
+
+bool KinectV2DepthCamera::open()
+{
+	if (!setupComplete)
+	{
+		setup();
+	}
+	ofLogWarning("KinectV2DepthCamera") << "Kinect v2 support is disabled in this build. Rebuild with ENABLE_KINECT_V2=1 to use it.";
+	connected = false;
+	frameNew = false;
+	return false;
+}
+
+void KinectV2DepthCamera::update()
+{
+	frameNew = false;
+}
+
+void KinectV2DepthCamera::close()
+{
+	connected = false;
+	frameNew = false;
+}
+
+bool KinectV2DepthCamera::isConnected() const
+{
+	return false;
+}
+
+bool KinectV2DepthCamera::isFrameNew() const
+{
+	return false;
+}
+
+unsigned int KinectV2DepthCamera::getWidth() const
+{
+	return 512;
+}
+
+unsigned int KinectV2DepthCamera::getHeight() const
+{
+	return 424;
+}
+
+const ofShortPixels& KinectV2DepthCamera::getRawDepthPixels() const
+{
+	return depthPixels;
+}
+
+const ofPixels& KinectV2DepthCamera::getColorPixels() const
+{
+	return colorPixels;
+}
+
+ofMatrix4x4 KinectV2DepthCamera::getWorldMatrix() const
+{
+	return ofMatrix4x4();
+}
+#endif

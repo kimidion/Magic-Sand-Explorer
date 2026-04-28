@@ -70,7 +70,34 @@ public:
     void setup(bool sdisplayGui);
     void update();
     void drawMainWindow(float x, float y, float width, float height);
-    void drawProjectorWindow();
+	    void drawProjectorWindow();
+	    void setLegacyGuiVisible(bool visible);
+
+	    const std::string& getColorMapFile() const;
+	    const std::vector<std::string>& getColorMapFilesList() const;
+	    int getColorMapFileIndex() const;
+		    void selectColorMap(int index, bool saveSelection = true);
+		    void selectNextColorMap(int direction, bool saveSelection = true);
+	    void resetColorMap();
+	    void saveCurrentColorMap();
+
+	    float getHeightMapScale() const;
+	    float getHeightMapOffset() const;
+	    void setHeightMapScale(float scale);
+	    void setHeightMapOffset(float offset);
+
+	    bool getDrawContourLines() const;
+	    void setDrawContourLines(bool draw);
+	    float getContourLineDistance() const;
+	    void setContourLineDistance(float distance);
+
+	    std::vector<ColorMap::HeightMapKey> getHeightMapKeys() const;
+	    int getSelectedColorIndex() const;
+	    void selectColorKey(int uiIndex);
+	    void moveSelectedColor(int direction);
+	    void insertColorAfterSelected();
+	    void removeSelectedColor();
+	    void setSelectedColorHeight(float height);
     
     // Gui and events functions
     void setupGui();
@@ -143,8 +170,9 @@ private:
     bool drawContourLines; // Flag if topographic contour lines are enabled
     
     // GUI Main interface and Modal
-    bool displayGui;
-    bool editColorMap;
+	    bool displayGui;
+	    bool legacyGuiVisible;
+	    bool editColorMap;
     ofxDatGui* gui;
     ofxDatGui* gui2;
     ofxDatGui* gui3;

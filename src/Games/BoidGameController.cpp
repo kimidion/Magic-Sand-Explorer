@@ -41,6 +41,7 @@ CBoidGameController::CBoidGameController()
 		ofLogVerbose("CBoidGameController()") << "could not read splash screen ";
 	}
 	GameDifficulty = 2;
+	legacyGuiVisible = true;
 
 	LastTimeEvent = ofGetElapsedTimef();
 	SetupGameSequence();
@@ -154,7 +155,10 @@ void CBoidGameController::update()
 			InitiateGameSequence();
 		}
 	}
-	gui->update();
+	if (legacyGuiVisible)
+	{
+		gui->update();
+	}
 }
 
 void CBoidGameController::ComputeScores()
@@ -309,7 +313,15 @@ void CBoidGameController::DrawFinalScoresOnFBO()
 void CBoidGameController::drawMainWindow(float x, float y, float width, float height) 
 {
 	fboVehicles.draw(x, y, width, height);
-	gui->draw();
+	if (legacyGuiVisible)
+	{
+		gui->draw();
+	}
+}
+
+void CBoidGameController::setLegacyGuiVisible(bool visible)
+{
+	legacyGuiVisible = visible;
 }
 
 
@@ -511,6 +523,23 @@ bool CBoidGameController::StartSeekMotherGame()
 
 	UpdateGUI();
 	return true;
+}
+
+void CBoidGameController::clearAnimals()
+{
+	fboVehicles.begin();
+	ofClear(255, 255, 255, 0);
+	fboVehicles.end();
+	fish.clear();
+	rabbits.clear();
+	sharks.clear();
+	showMotherFish = false;
+	showMotherRabbit = false;
+	if (GameSequence[CurrentGameSequence] != GAME_STATE_IDLE)
+	{
+		CurrentGameSequence = GameSequence.size() - 1;
+	}
+	UpdateGUI();
 }
 
 void CBoidGameController::setProjectorRes(ofVec2f& PR)

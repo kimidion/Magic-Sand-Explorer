@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "KinectProjector/KinectProjector.h"
 #include "SandSurfaceRenderer/SandSurfaceRenderer.h"
 #include "Games/BoidGameController.h"
+#include <vector>
 
 class ofApp : public ofBaseApp {
 
@@ -53,13 +54,45 @@ public:
 	bool projectorDisplayDetected = false;
 
 private:
-	void updateMainWindowLayout();
-	void drawMainWindowChrome() const;
-	ofVec2f windowToKinectPreview(float x, float y) const;
+		void updateMainWindowLayout();
+		void drawMainWindowChrome() const;
+		ofVec2f windowToKinectPreview(float x, float y) const;
+		void drawRunModeSidebar();
+		void drawRunText(const std::string& text, float x, float y, float scale = 1.0f);
+		void drawRunButton(const ofRectangle& rect, const std::string& label, bool active = false);
+		void drawRunToggle(const ofRectangle& rect, const std::string& label, bool checked);
+		void drawRunSlider(const ofRectangle& rect, const std::string& label, float value, float minValue, float maxValue, const std::string& valueLabel);
+		void drawRunSectionTitle(const std::string& label, float x, float y, float width);
+	bool handleRunModeClick(float x, float y);
+	bool handleRunModeDrag(float x, float y);
+	void updateRunSliderFromMouse(float x);
+		void addRunButton(const std::string& id, const ofRectangle& rect);
+		void addRunSlider(const std::string& id, const ofRectangle& rect, float minValue, float maxValue);
+		void drawRunTabs(float x, float y, float width);
+
+	struct RunUiHit
+	{
+		std::string id;
+		ofRectangle rect;
+		float minValue = 0.0f;
+		float maxValue = 1.0f;
+		bool slider = false;
+	};
 
 	std::shared_ptr<KinectProjector> kinectProjector;
 	SandSurfaceRenderer* sandSurfaceRenderer;
 	CBoidGameController boidGameController;
+		bool runSettingsOpen = true;
+		int runPanelPage = 0;
+		int runGameDifficulty = 2;
+		std::string activeRunDragId;
+		float pendingKeyHeight = 0.0f;
+		bool hasPendingKeyHeight = false;
+		std::vector<RunUiHit> runUiHits;
+		ofTrueTypeFont runFontSmall;
+		ofTrueTypeFont runFont;
+		ofTrueTypeFont runFontLarge;
+		bool runFontsLoaded = false;
 
 	// Main window ROI 
 	ofRectangle mainWindowROI;

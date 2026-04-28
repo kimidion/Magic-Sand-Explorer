@@ -58,7 +58,7 @@ public:
     bool createFile(string filename); //create a sample colormap file
     HeightMapKey operator[](int scalar) const; // Return a key
     int size() const;
-    ofTexture getTexture(); // return color map texture
+    ofTexture& getTexture(); // return color map texture
 
     // Utilities
     bool scaleRange(float factor); // Rescale the range

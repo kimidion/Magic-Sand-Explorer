@@ -44,11 +44,13 @@ class CBoidGameController
 		void drawProjectorWindow();
 
 		void drawMainWindow(float x, float y, float width, float height);
+		void setLegacyGuiVisible(bool visible);
 
 		// 0: absolute beginner, 1: beginner, 2: medium, 3: expert
 		bool StartGame(int difficulty);
 
 		bool StartSeekMotherGame();
+		void clearAnimals();
 
 		void setProjectorRes(ofVec2f& PR);
 
@@ -167,6 +169,7 @@ class CBoidGameController
 
 		// GUI
 		ofxDatGui* gui;
+		bool legacyGuiVisible;
 };
 
 #endif

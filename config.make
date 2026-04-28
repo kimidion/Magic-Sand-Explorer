@@ -61,7 +61,14 @@
 #
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_EXCLUSIONS =
+ENABLE_KINECT_V2 ?= 0
+
+ifeq ($(ENABLE_KINECT_V2),1)
+PROJECT_DEFINES += MAGIC_SAND_ENABLE_KINECT_V2=1
+else
+PROJECT_DEFINES += MAGIC_SAND_ENABLE_KINECT_V2=0
+PROJECT_EXCLUSIONS += $(PROJECT_ROOT)/src/KinectProjector/KinectV2DepthCamera.%
+endif
 
 ################################################################################
 # PROJECT LINKER FLAGS
@@ -76,11 +83,13 @@
 # add a runtime path to search for those shared libraries, since they aren't 
 # incorporated directly into the final executable application binary.
 ################################################################################
+ifeq ($(ENABLE_KINECT_V2),1)
 LIBFREENECT2_ROOT = $(shell cd $(PROJECT_ROOT) && pwd)/deps/libfreenect2/install
 
 PROJECT_LDFLAGS += -L$(LIBFREENECT2_ROOT)/lib
 PROJECT_LDFLAGS += -lfreenect2
 PROJECT_LDFLAGS += -Wl,-rpath,$(LIBFREENECT2_ROOT)/lib
+endif
 
 ################################################################################
 # PROJECT DEFINES

@@ -266,8 +266,12 @@ private:
     bool saveSettings();
     
 	void ProcessChessBoardInput(ofxCvGrayscaleImage& image);
-	void CheckAndNormalizeKinectROI();
-	void drawHardwareStatusPanel();
+		void CheckAndNormalizeKinectROI();
+		void resetManualROIPolygon();
+		void addManualROIPolygonPoint(ofVec2f point);
+		void finishManualROIPolygon();
+		void drawKinectROIPolygon(const std::vector<ofVec2f>& points);
+		void drawHardwareStatusPanel();
 	void drawSetupWorkflowScreen(float x, float y, float width, float height);
 	void drawCalibrationWorkflowPanel(float x, float y, float width, float height);
 	void drawWorkflowButton(const ofRectangle& rect, const std::string& label, bool enabled, ofColor color);
@@ -301,6 +305,7 @@ private:
     //kinect grabber
     KinectGrabber               kinectgrabber;
     bool                        spatialFiltering;
+	bool                        projectorCalibrationDisabledSpatialFiltering = false;
     bool                        followBigChanges;
     int                         numAveragingSlots;
 	bool                        doInpainting;
@@ -325,6 +330,7 @@ private:
 	ofRectangle calibrationActionROI;
 	ofRectangle workflowRecheckROI;
 	ofRectangle workflowDefineROI;
+	ofRectangle workflowRedrawROI;
 	ofRectangle workflowCalibrateROI;
 	ofRectangle workflowRunROI;
 	ofRectangle workflowContinueROI;
@@ -359,10 +365,11 @@ private:
     ofxCvContourFinder          contourFinder;
     float                       threshold;
     ofPolyline                  large;
-    ofRectangle                 kinectROI, kinectROIManualCalib;
-	ofVec2f                     ROIStartPoint;
-	ofVec2f                     ROICurrentPoint;
-	bool                        doShowROIonProjector;
+	    ofRectangle                 kinectROI, kinectROIManualCalib;
+		ofVec2f                     ROIStartPoint;
+		ofVec2f                     ROICurrentPoint;
+		std::vector<ofVec2f>         ROIManualPolygon;
+		bool                        doShowROIonProjector;
 
     // Base plane
     ofVec3f basePlaneNormal, basePlaneNormalBack;
