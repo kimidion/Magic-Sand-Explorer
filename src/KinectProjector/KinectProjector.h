@@ -286,6 +286,8 @@ private:
 	float drawWrappedText(ofTrueTypeFont& font, const std::string& text, float x, float y, float maxWidth, float lineHeight);
 	bool workflowScreenToKinect(float x, float y, ofVec2f& kinectPoint, bool clampToPreview = false) const;
 	void drawCameraFeedPreview(float x, float y, float width, float height);
+	bool buildTemporalColorPreview(ofxCvGrayscaleImage& previewImage);
+	void drawKinectColorPreview(float x, float y, float width, float height);
 	ofVec2f rotatedPreviewToKinect(float normalizedX, float normalizedY) const;
 	void recheckHardwareConnections();
 	void onMouseScrolled(ofMouseEventArgs& e);

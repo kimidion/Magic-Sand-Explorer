@@ -767,6 +767,46 @@ void KinectProjector::updateStatusGUI()
 	gui->getToggle("Full Frame Filtering")->setChecked(doFullFrameFiltering);
 }
 
+bool KinectProjector::buildTemporalColorPreview(ofxCvGrayscaleImage& previewImage)
+{
+	if (!hasKinectColorFrame || !TemporalFrameFilter.isValid())
+	{
+		return false;
+	}
+
+	unsigned char* pixels = nullptr;
+	if (TemporalFilteringType == 0)
+	{
+		pixels = TemporalFrameFilter.getMedianFilteredImage();
+	}
+	else if (TemporalFilteringType == 1)
+	{
+		pixels = TemporalFrameFilter.getAverageFilteredColImage();
+	}
+
+	if (!pixels)
+	{
+		return false;
+	}
+
+	previewImage.setFromPixels(pixels, kinectColorImage.width, kinectColorImage.height);
+	return true;
+}
+
+void KinectProjector::drawKinectColorPreview(float x, float y, float width, float height)
+{
+	ofxCvGrayscaleImage previewImage;
+	if (buildTemporalColorPreview(previewImage))
+	{
+		previewImage.draw(x, y, width, height);
+	}
+	else if (hasKinectColorFrame)
+	{
+		kinectColorImage.updateTexture();
+		kinectColorImage.draw(x, y, width, height);
+	}
+}
+
 void KinectProjector::update()
 {
     // Clear updated state variables
@@ -840,8 +880,7 @@ void KinectProjector::update()
 			{
 				if (drawKinectColorView && drawKinectView)
 				{
-					kinectColorImage.updateTexture();
-					kinectColorImage.draw(0, 0, kinectRes.x * 0.5f, kinectRes.y);
+					drawKinectColorPreview(0, 0, kinectRes.x * 0.5f, kinectRes.y);
 					FilteredDepthImage.draw(kinectRes.x * 0.5f, 0, kinectRes.x * 0.5f, kinectRes.y);
 					ofFill();
 					ofSetColor(0, 0, 0, 150);
@@ -856,8 +895,7 @@ void KinectProjector::update()
 				{
 					if (hasKinectColorFrame)
 					{
-						kinectColorImage.updateTexture();
-						kinectColorImage.draw(0, 0);
+						drawKinectColorPreview(0, 0, kinectRes.x, kinectRes.y);
 					}
 					else if (hasKinectDepthFrame)
 					{
@@ -1783,9 +1821,7 @@ void KinectProjector::updateProjKinectAutoCalibration()
 		updateBasePlane(); // Find base plane
 		if (!basePlaneComputed)
 		{
-			applicationState = APPLICATION_STATE_SETUP;
-			calibrationText = "Failed to acquire sea level plane";
-			resetProjectorCalibrationAttempt();
+			calibrationText = "Waiting for valid depth on active surface";
 			updateStatusGUI();
 			return;
 		}
@@ -2019,6 +2055,14 @@ void KinectProjector::CalibrateNextPoint()
 			return;
 		}
 
+		fboMainWindow.begin();
+		ofPushStyle();
+		ofSetColor(255);
+		ofClear(0, 0, 0, 255);
+		tempImage.draw(0, 0);
+		ofPopStyle();
+		fboMainWindow.end();
+
 		cv::Rect imageBounds(0, 0, cvGrayImage.cols, cvGrayImage.rows);
 		cv::Rect tempROI((int)kinectROI.x, (int)kinectROI.y,(int)kinectROI.width, (int)kinectROI.height);
 		tempROI = tempROI & imageBounds;
@@ -2073,9 +2117,17 @@ void KinectProjector::CalibrateNextPoint()
 
 			drawChessboardCorners(cvRgbImage, patternSize, cv::Mat(cvPoints), foundChessboard);
 
-			kinectColorImage.updateTexture();
 			fboMainWindow.begin();
-			kinectColorImage.draw(0, 0);
+			ofPushStyle();
+			ofSetColor(255);
+			tempImage.draw(0, 0);
+			ofNoFill();
+			ofSetColor(0, 255, 0);
+			for (const auto& point : cvPoints)
+			{
+				ofDrawCircle(point.x, point.y, 3.0f);
+			}
+			ofPopStyle();
 			fboMainWindow.end();
 
 			ofLogVerbose("KinectProjector") << "autoCalib(): Chessboard found for point :" << currentCalibPts;
@@ -2096,6 +2148,8 @@ void KinectProjector::CalibrateNextPoint()
 				// We cannot get all depth points for the chessboard
 				trials++;
 				ofLogVerbose("KinectProjector") << "autoCalib(): Depth points of chessboard not allfound on trial : " << trials;
+				calibrationText = "Checkerboard found, waiting for usable depth";
+				updateStatusGUI();
 				if (trials > 3 && currentCalibPts < autoCalibPts.size())
 				{
 					// Move the chessboard closer to the center of the screen
@@ -2112,6 +2166,8 @@ void KinectProjector::CalibrateNextPoint()
 			// We cannot find the chessboard
 			trials++;
 			ofLogVerbose("KinectProjector") << "autoCalib(): Chessboard not found on trial : " << trials;
+			calibrationText = "Looking for projected checkerboard (" + ofToString(trials) + ")";
+			updateStatusGUI();
 			if (trials > 3 && currentCalibPts < autoCalibPts.size()) 
 			{
 				// Move the chessboard closer to the center of the screen
@@ -2179,16 +2235,78 @@ void KinectProjector::updateBasePlane()
         ofLogVerbose("KinectProjector") << "updateBasePlane(): smallROI is null, cannot compute base plane normal" ;
         return;
     }
-    ofVec4f pt;
-	std::vector<ofVec3f> points(sw * sh);
-    ofLogVerbose("KinectProjector") << "updateBasePlane(): Computing points in smallROI : " << sw*sh ;
+	const ofFloatPixels& depthPixels = FilteredDepthImage.getFloatPixelsRef();
+	const bool hasDepthPixels = depthPixels.isAllocated() && depthPixels.getWidth() > 0 && depthPixels.getHeight() > 0;
+	const float* depthData = hasDepthPixels ? depthPixels.getData() : nullptr;
+	const int depthWidth = hasDepthPixels ? depthPixels.getWidth() : 0;
+	const int depthHeight = hasDepthPixels ? depthPixels.getHeight() : 0;
+
+	auto worldPointFromDepth = [this](int kx, int ky, float depth) {
+		ofVec4f kc = ofVec2f(kx, ky);
+		kc.z = depth;
+		kc.w = 1;
+		ofVec4f wc = kinectWorldMatrix * kc * kc.z;
+		return ofVec3f(wc);
+	};
+	auto appendPoint = [&worldPointFromDepth](std::vector<ofVec3f>& target, int kx, int ky, float depth) {
+		if (!std::isfinite(depth) || depth <= 0.0f || depth >= 3999.0f)
+		{
+			return;
+		}
+
+		ofVec3f worldPoint = worldPointFromDepth(kx, ky, depth);
+		if (std::isfinite(worldPoint.x) && std::isfinite(worldPoint.y) && std::isfinite(worldPoint.z) && worldPoint.lengthSquared() > 0.0001f)
+		{
+			target.push_back(worldPoint);
+		}
+	};
+
+	std::vector<ofVec3f> points;
+	points.reserve(sw * sh);
+    ofLogVerbose("KinectProjector") << "updateBasePlane(): Computing filtered points in smallROI : " << sw*sh ;
     for (int x = 0; x<sw; x++){
         for (int y = 0; y<sh; y ++){
-            points[x+y*sw] = kinectCoordToWorldCoord(x+sl, y+st);
+			const int kx = x + sl;
+			const int ky = y + st;
+			if (kx < 0 || ky < 0 || kx >= depthWidth || ky >= depthHeight)
+			{
+				continue;
+			}
+
+			appendPoint(points, kx, ky, depthData[ky * depthWidth + kx]);
         }
     }
+	ofLogVerbose("KinectProjector") << "updateBasePlane(): Valid depth points: " << points.size() << " of " << sw * sh;
+	if (points.size() < 50)
+	{
+		std::vector<ofVec3f> rawPoints;
+		rawPoints.reserve(sw * sh);
+		for (int x = 0; x<sw; x++){
+			for (int y = 0; y<sh; y ++){
+				const int kx = x + sl;
+				const int ky = y + st;
+				if (kx < 0 || ky < 0 || kx >= kinectRes.x || ky >= kinectRes.y)
+				{
+					continue;
+				}
+
+				appendPoint(rawPoints, kx, ky, kinectgrabber.getRawDepthAt(kx, ky));
+			}
+		}
+		ofLogVerbose("KinectProjector") << "updateBasePlane(): Raw fallback valid depth points: " << rawPoints.size() << " of " << sw * sh;
+		if (rawPoints.size() >= 50)
+		{
+			points.swap(rawPoints);
+		}
+	}
+	if (points.size() < 50)
+	{
+		ofLogWarning("KinectProjector") << "updateBasePlane(): Not enough valid depth points to compute base plane";
+		return;
+	}
+
     ofLogVerbose("KinectProjector") << "updateBasePlane(): Computing plane from points" ;
-    basePlaneEq = plane_from_points(points.data(), sw*sh);
+    basePlaneEq = plane_from_points(points.data(), points.size());
 	if (basePlaneEq.x == 0 && basePlaneEq.y == 0 && basePlaneEq.z == 0)
 	{
 		ofLogVerbose("KinectProjector") << "updateBasePlane(): plane_from_points could not compute basePlane";
@@ -2217,16 +2335,83 @@ void KinectProjector::updateMaxOffset(){
         ofLogVerbose("KinectProjector") << "updateMaxOffset(): smallROI is null, cannot compute base plane normal" ;
         return;
     }
-    ofVec4f pt;
-	std::vector<ofVec3f> points(sw * sh);
-    ofLogVerbose("KinectProjector") << "updateMaxOffset(): Computing points in smallROI : " << sw*sh ;
+	const ofFloatPixels& depthPixels = FilteredDepthImage.getFloatPixelsRef();
+	const bool hasDepthPixels = depthPixels.isAllocated() && depthPixels.getWidth() > 0 && depthPixels.getHeight() > 0;
+	const float* depthData = hasDepthPixels ? depthPixels.getData() : nullptr;
+	const int depthWidth = hasDepthPixels ? depthPixels.getWidth() : 0;
+	const int depthHeight = hasDepthPixels ? depthPixels.getHeight() : 0;
+
+	auto worldPointFromDepth = [this](int kx, int ky, float depth) {
+		ofVec4f kc = ofVec2f(kx, ky);
+		kc.z = depth;
+		kc.w = 1;
+		ofVec4f wc = kinectWorldMatrix * kc * kc.z;
+		return ofVec3f(wc);
+	};
+	auto appendPoint = [&worldPointFromDepth](std::vector<ofVec3f>& target, int kx, int ky, float depth) {
+		if (!std::isfinite(depth) || depth <= 0.0f || depth >= 3999.0f)
+		{
+			return;
+		}
+
+		ofVec3f worldPoint = worldPointFromDepth(kx, ky, depth);
+		if (std::isfinite(worldPoint.x) && std::isfinite(worldPoint.y) && std::isfinite(worldPoint.z) && worldPoint.lengthSquared() > 0.0001f)
+		{
+			target.push_back(worldPoint);
+		}
+	};
+
+	std::vector<ofVec3f> points;
+	points.reserve(sw * sh);
+    ofLogVerbose("KinectProjector") << "updateMaxOffset(): Computing filtered points in smallROI : " << sw*sh ;
     for (int x = 0; x<sw; x++){
         for (int y = 0; y<sh; y ++){
-            points[x+y*sw] = kinectCoordToWorldCoord(x+sl, y+st);//vertexCcvertexCc;
+			const int kx = x + sl;
+			const int ky = y + st;
+			if (kx < 0 || ky < 0 || kx >= depthWidth || ky >= depthHeight)
+			{
+				continue;
+			}
+
+			appendPoint(points, kx, ky, depthData[ky * depthWidth + kx]);
         }
     }
+	ofLogVerbose("KinectProjector") << "updateMaxOffset(): Valid depth points: " << points.size() << " of " << sw * sh;
+	if (points.size() < 50)
+	{
+		std::vector<ofVec3f> rawPoints;
+		rawPoints.reserve(sw * sh);
+		for (int x = 0; x<sw; x++){
+			for (int y = 0; y<sh; y ++){
+				const int kx = x + sl;
+				const int ky = y + st;
+				if (kx < 0 || ky < 0 || kx >= kinectRes.x || ky >= kinectRes.y)
+				{
+					continue;
+				}
+
+				appendPoint(rawPoints, kx, ky, kinectgrabber.getRawDepthAt(kx, ky));
+			}
+		}
+		ofLogVerbose("KinectProjector") << "updateMaxOffset(): Raw fallback valid depth points: " << rawPoints.size() << " of " << sw * sh;
+		if (rawPoints.size() >= 50)
+		{
+			points.swap(rawPoints);
+		}
+	}
+	if (points.size() < 50)
+	{
+		ofLogWarning("KinectProjector") << "updateMaxOffset(): Not enough valid depth points to update ceiling";
+		return;
+	}
+
     ofLogVerbose("KinectProjector") << "updateMaxOffset(): Computing plane from points" ;
-    ofVec4f eqoff = plane_from_points(points.data(), sw*sh);
+    ofVec4f eqoff = plane_from_points(points.data(), points.size());
+	if (eqoff.x == 0 && eqoff.y == 0 && eqoff.z == 0)
+	{
+		ofLogWarning("KinectProjector") << "updateMaxOffset(): plane_from_points could not compute ceiling";
+		return;
+	}
     maxOffset = -eqoff.w-maxOffsetSafeRange;
     maxOffsetBack = maxOffset;
     // Update max Offset
@@ -2240,24 +2425,124 @@ bool KinectProjector::addPointPair() {
     bool okchess = true;
     string resultMessage;
     ofLogVerbose("KinectProjector") << "addPointPair(): Adding point pair in kinect world coordinates" ;
-    int nDepthPoints = 0;
-    for (int i=0; i<cvPoints.size(); i++) {
-        ofVec3f worldPoint = kinectCoordToWorldCoord(cvPoints[i].x, cvPoints[i].y);
-        if (worldPoint.z > 0)   nDepthPoints++;
-    }
+	auto worldPointFromDepth = [this](float x, float y, float depth) {
+		ofVec4f kc = ofVec2f(x, y);
+		kc.z = depth;
+		kc.w = 1;
+		ofVec4f wc = kinectWorldMatrix * kc * kc.z;
+		return ofVec3f(wc);
+	};
+	auto isValidWorldPoint = [](const ofVec3f& worldPoint) {
+		return std::isfinite(worldPoint.x) && std::isfinite(worldPoint.y) &&
+			   std::isfinite(worldPoint.z) && worldPoint.z > 0.0f &&
+			   worldPoint.lengthSquared() > 0.0001f;
+	};
+	auto depthAt = [this](int x, int y, bool rawDepth) {
+		x = ofClamp(x, 0, static_cast<int>(kinectRes.x) - 1);
+		y = ofClamp(y, 0, static_cast<int>(kinectRes.y) - 1);
+		if (rawDepth)
+		{
+			return kinectgrabber.getRawDepthAt(x, y);
+		}
+		int ind = y * static_cast<int>(kinectRes.x) + x;
+		return FilteredDepthImage.getFloatPixelsRef().getData()[ind];
+	};
+	auto worldPointForCorner = [&](const cv::Point2f& corner, bool* usedRawDepth) {
+		const int cx = ofClamp(static_cast<int>(std::round(corner.x)), 0, static_cast<int>(kinectRes.x) - 1);
+		const int cy = ofClamp(static_cast<int>(std::round(corner.y)), 0, static_cast<int>(kinectRes.y) - 1);
+
+		for (bool rawDepth : {false, true})
+		{
+			float depth = depthAt(cx, cy, rawDepth);
+			if (std::isfinite(depth) && depth > 0.0f && depth < 3999.0f)
+			{
+				ofVec3f worldPoint = worldPointFromDepth(corner.x, corner.y, depth);
+				if (isValidWorldPoint(worldPoint))
+				{
+					if (usedRawDepth != nullptr)
+					{
+						*usedRawDepth = rawDepth;
+					}
+					return worldPoint;
+				}
+			}
+		}
+
+		for (int radius = 1; radius <= 4; radius++)
+		{
+			for (bool rawDepth : {false, true})
+			{
+				for (int dy = -radius; dy <= radius; dy++)
+				{
+					for (int dx = -radius; dx <= radius; dx++)
+					{
+						if (std::abs(dx) != radius && std::abs(dy) != radius)
+						{
+							continue;
+						}
+						float depth = depthAt(cx + dx, cy + dy, rawDepth);
+						if (!std::isfinite(depth) || depth <= 0.0f || depth >= 3999.0f)
+						{
+							continue;
+						}
+						ofVec3f worldPoint = worldPointFromDepth(corner.x, corner.y, depth);
+						if (isValidWorldPoint(worldPoint))
+						{
+							if (usedRawDepth != nullptr)
+							{
+								*usedRawDepth = rawDepth;
+							}
+							return worldPoint;
+						}
+					}
+				}
+			}
+		}
+
+		if (usedRawDepth != nullptr)
+		{
+			*usedRawDepth = false;
+		}
+		return ofVec3f(0);
+	};
+
+	std::vector<ofVec3f> worldPoints;
+	worldPoints.reserve(cvPoints.size());
+	int nDepthPoints = 0;
+	int nRawDepthPoints = 0;
+	for (int i=0; i<cvPoints.size(); i++) {
+		bool usedRawDepth = false;
+		ofVec3f worldPoint = worldPointForCorner(cvPoints[i], &usedRawDepth);
+		if (isValidWorldPoint(worldPoint))
+		{
+			nDepthPoints++;
+			if (usedRawDepth)
+			{
+				nRawDepthPoints++;
+			}
+		}
+		worldPoints.push_back(worldPoint);
+	}
     if (nDepthPoints == (chessboardX-1)*(chessboardY-1)) {
         for (int i=0; i<cvPoints.size(); i++) {
-            ofVec3f worldPoint = kinectCoordToWorldCoord(cvPoints[i].x, cvPoints[i].y);
-            pairsKinect.push_back(worldPoint);
+            pairsKinect.push_back(worldPoints[i]);
             pairsProjector.push_back(currentProjectorPoints[i]);
         }
         resultMessage = "addPointPair(): Added " + ofToString((chessboardX-1)*(chessboardY-1)) + " points pairs.";
+		if (nRawDepthPoints > 0)
+		{
+			resultMessage += " Raw fallback supplied " + ofToString(nRawDepthPoints) + " points.";
+		}
 		if (DumpDebugFiles)
 		{
 			savePointPair();
 		}
     } else {
-        resultMessage = "addPointPair(): Points not added because not all chessboard\npoints' depth known. Try re-positionining.";
+        resultMessage = "addPointPair(): Points not added because only " + ofToString(nDepthPoints) + " of " +
+			ofToString((chessboardX-1)*(chessboardY-1)) + " chessboard points had usable depth.";
+		calibrationText = "Checkerboard found, waiting for depth at corners (" + ofToString(nDepthPoints) + "/" +
+			ofToString((chessboardX-1)*(chessboardY-1)) + ")";
+		updateStatusGUI();
         okchess = false;
     }
     ofLogVerbose("KinectProjector") << resultMessage ;
