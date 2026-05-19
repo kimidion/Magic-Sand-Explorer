@@ -25,8 +25,33 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 #include "SandSurfaceRenderer.h"
 #include <algorithm>
+#include <cmath>
 
 using namespace ofxCSG;
+
+namespace {
+bool pointInsidePolygon(float x, float y, const std::vector<ofVec2f>& polygon)
+{
+	if (polygon.size() < 3)
+	{
+		return true;
+	}
+
+	bool inside = false;
+	for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+	{
+		const ofVec2f& pi = polygon[i];
+		const ofVec2f& pj = polygon[j];
+		const bool crosses = ((pi.y > y) != (pj.y > y)) &&
+			(x < (pj.x - pi.x) * (y - pi.y) / ((pj.y - pi.y) + 0.00001f) + pi.x);
+		if (crosses)
+		{
+			inside = !inside;
+		}
+	}
+	return inside;
+}
+}
 
 SandSurfaceRenderer::SandSurfaceRenderer(std::shared_ptr<KinectProjector> const& k, std::shared_ptr<ofAppBaseWindow> const& p)
 :settingsLoaded(false),
@@ -90,13 +115,7 @@ void SandSurfaceRenderer::setup(bool sdisplayGui){
         settingsLoaded = true;
     }
     
-    //Set elevation Min and Max
-    elevationMin = -heightMap.getScalarRangeMin();
-    elevationMax = -heightMap.getScalarRangeMax();
-    
-    // Calculate the  height map elevation scaling and offset coefficients
-	heightMapScale = (heightMap.getNumEntries()-1)/((elevationMax-elevationMin));
-	heightMapOffset = 0.5/heightMap.getNumEntries()-heightMapScale*elevationMin;
+	resetHeightMapTransform();
     
     // Calculate the contourline fbo scaling and offset coefficients
 	contourLineFboScale = elevationMin-elevationMax;
@@ -181,6 +200,7 @@ void SandSurfaceRenderer::updateRangesAndBasePlane(){
 void SandSurfaceRenderer::setupMesh(){
     // Initialise mesh
     kinectROI = kinectProjector->getKinectROI();
+	kinectROIPolygon = kinectProjector->getKinectROIPolygon();
   //  ofVec2f kinectRes = kinectProjector->getKinectRes();
 	ofLogVerbose("SandSurfaceRenderer") << "setupMesh. KinectROI: " << kinectROI;
 
@@ -198,10 +218,17 @@ void SandSurfaceRenderer::setupMesh(){
     for(unsigned int y=0;y<meshheight-1;y++)
         for(unsigned int x=0;x<meshwidth-1;x++)
         {
+			const float cellX = kinectROI.x + x + 0.5f;
+			const float cellY = kinectROI.y + y + 0.5f;
+			if (!pointInsidePolygon(cellX, cellY, kinectROIPolygon))
+			{
+				continue;
+			}
+
             mesh.addIndex(x+y*meshwidth);         // 0
             mesh.addIndex((x+1)+y*meshwidth);     // 1
             mesh.addIndex(x+(y+1)*meshwidth);     // 10
-            
+
             mesh.addIndex((x+1)+y*meshwidth);     // 1
             mesh.addIndex((x+1)+(y+1)*meshwidth); // 11
             mesh.addIndex(x+(y+1)*meshwidth);     // 10
@@ -211,8 +238,11 @@ void SandSurfaceRenderer::setupMesh(){
 void SandSurfaceRenderer::update(){
     // Update Renderer state if needed
     //if (kinectProjector->isROIUpdated() || kinectProjector->getKinectROI() != kinectROI)
-	if (kinectProjector->getKinectROI() != kinectROI)
+	if (kinectProjector->getKinectROI() != kinectROI ||
+		kinectProjector->getKinectROIPolygon() != kinectROIPolygon)
+	{
 		setupMesh();
+	}
     if (kinectProjector->isBasePlaneUpdated())
         updateRangesAndBasePlane();
     if (kinectProjector->isCalibrationUpdated())
@@ -282,6 +312,7 @@ void SandSurfaceRenderer::selectColorMap(int index, bool saveSelection)
 	index = ofClamp(index, 0, static_cast<int>(colorMapFilesList.size()) - 1);
 	colorMapFile = colorMapFilesList[index];
 	heightMap.loadFile(colorMapPath + colorMapFile);
+	resetHeightMapTransform();
 		if (displayGui && legacyGuiVisible && colorList != nullptr)
 		{
 			populateColorList();
@@ -318,6 +349,7 @@ void SandSurfaceRenderer::resetColorMap()
 		return;
 	}
 	heightMap.loadFile(colorMapPath + colorMapFile);
+	resetHeightMapTransform();
 		if (displayGui && legacyGuiVisible && colorList != nullptr)
 		{
 			populateColorList();
@@ -341,6 +373,24 @@ float SandSurfaceRenderer::getHeightMapScale() const
 float SandSurfaceRenderer::getHeightMapOffset() const
 {
 	return heightMapOffset;
+}
+
+void SandSurfaceRenderer::resetHeightMapTransform()
+{
+	// Set elevation Min and Max.
+	elevationMin = -heightMap.getScalarRangeMin();
+	elevationMax = -heightMap.getScalarRangeMax();
+	const float elevationRange = elevationMax - elevationMin;
+	if (heightMap.getNumEntries() <= 1 || std::abs(elevationRange) < 0.0001f)
+	{
+		heightMapScale = 1.0f;
+		heightMapOffset = 0.0f;
+		return;
+	}
+
+	// Calculate the height map elevation scaling and offset coefficients.
+	heightMapScale = (heightMap.getNumEntries() - 1) / elevationRange;
+	heightMapOffset = 0.5f / heightMap.getNumEntries() - heightMapScale * elevationMin;
 }
 
 void SandSurfaceRenderer::setHeightMapScale(float scale)

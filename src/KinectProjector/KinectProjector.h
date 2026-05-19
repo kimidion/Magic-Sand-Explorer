@@ -88,6 +88,9 @@ public:
 	void selectProjectorDisplay(int optionIndex);
 	bool isRequiredHardwareConnected() const;
 	std::string getRequiredHardwareStatus() const;
+	void setCameraFeedRotation(int degrees);
+	void cycleCameraFeedRotation();
+	int getCameraFeedRotation() const;
 	
 	void setFollowBigChanges(bool sfollowBigChanges);
 	void StartManualROIDefinition();
@@ -140,6 +143,9 @@ public:
     ofRectangle getKinectROI(){
         return kinectROI;
     }
+	const std::vector<ofVec2f>& getKinectROIPolygon() const {
+		return ROIManualPolygon;
+	}
     ofVec2f getKinectRes(){
         return kinectRes;
     }
@@ -271,12 +277,16 @@ private:
 		void addManualROIPolygonPoint(ofVec2f point);
 		void finishManualROIPolygon();
 		void drawKinectROIPolygon(const std::vector<ofVec2f>& points);
+		void maskFilteredDepthToManualPolygon(ofFloatPixels& pixels);
+		void drawWorkflowROIMarkers();
 		void drawHardwareStatusPanel();
 	void drawSetupWorkflowScreen(float x, float y, float width, float height);
 	void drawCalibrationWorkflowPanel(float x, float y, float width, float height);
 	void drawWorkflowButton(const ofRectangle& rect, const std::string& label, bool enabled, ofColor color);
 	float drawWrappedText(ofTrueTypeFont& font, const std::string& text, float x, float y, float maxWidth, float lineHeight);
 	bool workflowScreenToKinect(float x, float y, ofVec2f& kinectPoint, bool clampToPreview = false) const;
+	void drawCameraFeedPreview(float x, float y, float width, float height);
+	ofVec2f rotatedPreviewToKinect(float normalizedX, float normalizedY) const;
 	void recheckHardwareConnections();
 	void onMouseScrolled(ofMouseEventArgs& e);
 
@@ -310,6 +320,7 @@ private:
     int                         numAveragingSlots;
 	bool                        doInpainting;
 	bool                        doFullFrameFiltering;
+	int                         cameraFeedRotationDegrees;
 
     //kinect buffer
     ofxCvFloatImage             FilteredDepthImage;

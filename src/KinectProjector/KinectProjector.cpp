@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "GLFW/glfw3.h"
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <exception>
 #include <sstream>
 
 using namespace ofxCSG;
@@ -41,6 +43,132 @@ T getXmlValue(const ofXml& parent, const std::string& childName, const T& defaul
 {
 	ofXml child = parent.getChild(childName);
 	return child ? child.getValue<T>() : defaultValue;
+}
+
+std::vector<float> parseXmlFloatList(const std::string& value)
+{
+	std::string cleaned = value;
+	std::replace(cleaned.begin(), cleaned.end(), ',', ' ');
+	std::replace(cleaned.begin(), cleaned.end(), ';', ' ');
+
+	std::stringstream ss(cleaned);
+	std::vector<float> values;
+	float number = 0.0f;
+	while (ss >> number)
+	{
+		values.push_back(number);
+	}
+	return values;
+}
+
+ofRectangle getXmlRectangleValue(const ofXml& parent, const std::string& childName, const ofRectangle& defaultValue)
+{
+	ofXml child = parent.getChild(childName);
+	if (!child)
+	{
+		return defaultValue;
+	}
+
+	const std::vector<float> values = parseXmlFloatList(child.getValue<std::string>());
+	if (values.size() >= 5)
+	{
+		return ofRectangle(values[0], values[1], values[3], values[4]);
+	}
+	if (values.size() >= 4)
+	{
+		return ofRectangle(values[0], values[1], values[2], values[3]);
+	}
+
+	ofLogWarning("KinectProjector") << "Invalid rectangle in " << childName << ": " << child.getValue<std::string>();
+	return defaultValue;
+}
+
+std::string rectangleToXmlValue(const ofRectangle& rect)
+{
+	std::stringstream ss;
+	ss << rect.x << ", " << rect.y << ", 0, " << rect.width << ", " << rect.height;
+	return ss.str();
+}
+
+std::vector<ofVec2f> rectToPolygon(const ofRectangle& rect)
+{
+	std::vector<ofVec2f> polygon;
+	polygon.push_back(ofVec2f(rect.getMinX(), rect.getMinY()));
+	polygon.push_back(ofVec2f(rect.getMaxX(), rect.getMinY()));
+	polygon.push_back(ofVec2f(rect.getMaxX(), rect.getMaxY()));
+	polygon.push_back(ofVec2f(rect.getMinX(), rect.getMaxY()));
+	return polygon;
+}
+
+std::vector<ofVec2f> getXmlPolygonValue(const ofXml& parent, const std::string& childName)
+{
+	ofXml child = parent.getChild(childName);
+	if (!child)
+	{
+		return {};
+	}
+
+	const std::vector<float> values = parseXmlFloatList(child.getValue<std::string>());
+	std::vector<ofVec2f> polygon;
+	for (size_t i = 0; i + 1 < values.size(); i += 2)
+	{
+		polygon.push_back(ofVec2f(values[i], values[i + 1]));
+	}
+	return polygon;
+}
+
+std::string polygonToXmlValue(const std::vector<ofVec2f>& polygon)
+{
+	std::stringstream ss;
+	for (size_t i = 0; i < polygon.size(); ++i)
+	{
+		if (i > 0)
+		{
+			ss << "; ";
+		}
+		ss << polygon[i].x << ", " << polygon[i].y;
+	}
+	return ss.str();
+}
+
+bool pointInsidePolygon(float x, float y, const std::vector<ofVec2f>& polygon)
+{
+	bool inside = false;
+	const size_t count = polygon.size();
+	for (size_t i = 0, j = count - 1; i < count; j = i++)
+	{
+		const ofVec2f& pi = polygon[i];
+		const ofVec2f& pj = polygon[j];
+		const bool crosses = ((pi.y > y) != (pj.y > y)) &&
+			(x < (pj.x - pi.x) * (y - pi.y) / ((pj.y - pi.y) + 0.00001f) + pi.x);
+		if (crosses)
+		{
+			inside = !inside;
+		}
+	}
+	return inside;
+}
+
+int normalizeCameraFeedRotation(int degrees)
+{
+	int normalized = degrees % 360;
+	if (normalized < 0)
+	{
+		normalized += 360;
+	}
+	if (normalized < 45 || normalized >= 315)
+	{
+		return 0;
+	}
+	if (normalized < 135)
+	{
+		return 90;
+	}
+	if (normalized < 225)
+	{
+		return 180;
+	}
+	return 270;
 }
 
 std::unique_ptr<ofxDatGuiTheme> makeResponsiveGuiTheme(int fontSize)
@@ -77,6 +205,35 @@ void drawScaledBitmapString(const std::string& text, float x, float y, float sca
 	ofDrawBitmapString(text, 0, 0);
 	ofPopMatrix();
 }
+
+std::string makeBackupTimestamp()
+{
+	time_t t = time(0);
+	struct tm * now = localtime(&t);
+	std::stringstream ss;
+	ss << now->tm_year + 1900 << "-"
+		<< now->tm_mon + 1 << "-"
+		<< now->tm_mday << "-"
+		<< now->tm_hour << "-"
+		<< now->tm_min << "-"
+		<< now->tm_sec;
+	return ss.str();
+}
+
+void backupDataFileIfExists(const std::string& path, const std::string& label)
+{
+	if (!ofFile::doesFileExist(path, true))
+	{
+		return;
+	}
+
+	ofDirectory::createDirectory("settings/backups", true, true);
+	const std::string backupPath = "settings/backups/" + label + "_" + makeBackupTimestamp() + ".xml";
+	if (!ofFile::copyFromTo(path, backupPath, true, false))
+	{
+		ofLogWarning("KinectProjector") << "Could not back up " << path << " to " << backupPath;
+	}
+}
 }
 
 KinectProjector::KinectProjector(std::shared_ptr<ofAppBaseWindow> const& p)
@@ -90,7 +247,8 @@ projKinectCalibrationUpdated (false),
 imageStabilized (false),
 waitingForFlattenSand (false),
 drawKinectView(false),
-drawKinectColorView(true)
+drawKinectColorView(true),
+cameraFeedRotationDegrees(0)
 {
 	secondScreenFound = true;
 	doShowROIonProjector = false;
@@ -161,7 +319,7 @@ void KinectProjector::setup(bool sdisplayGui)
 	doFullFrameFiltering = false;
 	spatialFiltering = true;
     followBigChanges = false;
-    numAveragingSlots = 15;
+    numAveragingSlots = 25;
 	TemporalFrameCounter = 0;
     
     // Get projector and kinect width & height
@@ -176,6 +334,30 @@ void KinectProjector::setup(bool sdisplayGui)
     thresholdedImage.allocate(kinectRes.x, kinectRes.y);
     
 	kpt = new ofxKinectProjectorToolkit(projRes, kinectRes);
+
+	if (loadSettings())
+	{
+		CheckAndNormalizeKinectROI();
+		ROIcalibrated = true;
+		basePlaneComputed = true;
+		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Saved ROI/settings loaded";
+	}
+	else
+	{
+		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Saved ROI/settings not loaded";
+	}
+
+	if (kpt->loadCalibration("settings/calibration.xml"))
+	{
+		kinectProjMatrix = kpt->getProjectionMatrix();
+		projKinectCalibrated = true;
+		projKinectCalibrationUpdated = true;
+		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Saved projector calibration loaded";
+	}
+	else
+	{
+		ofLogVerbose("KinectProjector") << "KinectProjector.setup(): Saved projector calibration not loaded for current resolution";
+	}
 
 	// finish kinectgrabber setup and start the grabber
     kinectgrabber.setupFramefilter(gradFieldResolution, maxOffset, kinectROI, spatialFiltering, followBigChanges, numAveragingSlots);
@@ -238,6 +420,26 @@ std::string KinectProjector::getRequiredHardwareStatus() const
 		status += "\n- Projector/second display not detected";
 	}
 	return status;
+}
+
+void KinectProjector::setCameraFeedRotation(int degrees)
+{
+	cameraFeedRotationDegrees = normalizeCameraFeedRotation(degrees);
+	if (displayGui && gui != nullptr && gui->getDropdown("Camera feed rotation") != nullptr)
+	{
+		gui->getDropdown("Camera feed rotation")->select(cameraFeedRotationDegrees / 90);
+	}
+	saveSettings();
+}
+
+void KinectProjector::cycleCameraFeedRotation()
+{
+	setCameraFeedRotation(cameraFeedRotationDegrees + 90);
+}
+
+int KinectProjector::getCameraFeedRotation() const
+{
+	return cameraFeedRotationDegrees;
 }
 
 void KinectProjector::recheckHardwareConnections()
@@ -572,7 +774,7 @@ void KinectProjector::update()
 //    ROIUpdated = false;
     projKinectCalibrationUpdated = false;
 
-	if (displayGui)
+	if (displayGui && applicationState != APPLICATION_STATE_RUNNING)
 	{
 		updateGuiLayout();
 		gui->update();
@@ -631,6 +833,8 @@ void KinectProjector::update()
 		{
 			//ofEnableAlphaBlending();
 			fboMainWindow.begin();
+			ofPushStyle();
+			ofSetColor(255);
 			ofClear(0, 0, 0, 255);
             if (drawKinectView || drawKinectColorView)
 			{
@@ -712,6 +916,7 @@ void KinectProjector::update()
 			{
                 ofClear(0, 0, 0, 0);
             }
+			ofPopStyle();
             fboMainWindow.end();
         }
     }
@@ -851,10 +1056,40 @@ bool KinectProjector::workflowScreenToKinect(float x, float y, ofVec2f& kinectPo
 		return false;
 	}
 
-	kinectPoint.set(
-		ofMap(x, workflowPreviewROI.x, workflowPreviewROI.getMaxX(), 0, kinectRes.x, true),
-		ofMap(y, workflowPreviewROI.y, workflowPreviewROI.getMaxY(), 0, kinectRes.y, true));
+	const float normalizedX = ofMap(x, workflowPreviewROI.x, workflowPreviewROI.getMaxX(), 0, 1, true);
+	const float normalizedY = ofMap(y, workflowPreviewROI.y, workflowPreviewROI.getMaxY(), 0, 1, true);
+	kinectPoint = rotatedPreviewToKinect(normalizedX, normalizedY);
 	return true;
+}
+
+ofVec2f KinectProjector::rotatedPreviewToKinect(float normalizedX, float normalizedY) const
+{
+	const float nx = ofClamp(normalizedX, 0.0f, 1.0f);
+	const float ny = ofClamp(normalizedY, 0.0f, 1.0f);
+	float sourceX = nx;
+	float sourceY = ny;
+
+	switch (cameraFeedRotationDegrees)
+	{
+	case 90:
+		sourceX = ny;
+		sourceY = 1.0f - nx;
+		break;
+	case 180:
+		sourceX = 1.0f - nx;
+		sourceY = 1.0f - ny;
+		break;
+	case 270:
+		sourceX = 1.0f - ny;
+		sourceY = nx;
+		break;
+	default:
+		break;
+	}
+
+	return ofVec2f(
+		ofClamp(sourceX * kinectRes.x, 0.0f, std::max(0.0f, kinectRes.x - 1.0f)),
+		ofClamp(sourceY * kinectRes.y, 0.0f, std::max(0.0f, kinectRes.y - 1.0f)));
 }
 
 bool KinectProjector::handleWorkflowPreviewMousePressed(float x, float y, int button)
@@ -1114,6 +1349,136 @@ void KinectProjector::drawKinectROIPolygon(const std::vector<ofVec2f>& points)
 	ofEndShape(points.size() >= 3);
 }
 
+void KinectProjector::maskFilteredDepthToManualPolygon(ofFloatPixels& pixels)
+{
+	if (ROIManualPolygon.size() != 4 || !pixels.isAllocated())
+	{
+		return;
+	}
+
+	const int width = pixels.getWidth();
+	const int height = pixels.getHeight();
+	if (width <= 0 || height <= 0)
+	{
+		return;
+	}
+
+	float* data = pixels.getData();
+	const int minX = std::max(0, static_cast<int>(std::floor(kinectROI.getMinX())));
+	const int maxX = std::min(width, static_cast<int>(std::ceil(kinectROI.getMaxX())));
+	const int minY = std::max(0, static_cast<int>(std::floor(kinectROI.getMinY())));
+	const int maxY = std::min(height, static_cast<int>(std::ceil(kinectROI.getMaxY())));
+
+	for (int y = minY; y < maxY; ++y)
+	{
+		for (int x = minX; x < maxX; ++x)
+		{
+			if (!pointInsidePolygon(x + 0.5f, y + 0.5f, ROIManualPolygon))
+			{
+				data[y * width + x] = 0.0f;
+			}
+		}
+	}
+}
+
+void KinectProjector::drawWorkflowROIMarkers()
+{
+	if (calibrationState != CALIBRATION_STATE_ROI_MANUAL_DETERMINATION ||
+		ROICalibState != ROI_CALIBRATION_STATE_INIT ||
+		workflowPreviewROI.width <= 0 ||
+		workflowPreviewROI.height <= 0 ||
+		kinectRes.x <= 0 ||
+		kinectRes.y <= 0)
+	{
+		return;
+	}
+
+	auto toWorkflowPoint = [&](const ofVec2f& point) {
+		float nx = ofMap(point.x, 0, kinectRes.x, 0, 1, true);
+		float ny = ofMap(point.y, 0, kinectRes.y, 0, 1, true);
+		float viewX = nx;
+		float viewY = ny;
+		switch (cameraFeedRotationDegrees)
+		{
+		case 90:
+			viewX = 1.0f - ny;
+			viewY = nx;
+			break;
+		case 180:
+			viewX = 1.0f - nx;
+			viewY = 1.0f - ny;
+			break;
+		case 270:
+			viewX = ny;
+			viewY = 1.0f - nx;
+			break;
+		default:
+			break;
+		}
+		return ofVec2f(
+			ofMap(viewX, 0, 1, workflowPreviewROI.x, workflowPreviewROI.getMaxX(), true),
+			ofMap(viewY, 0, 1, workflowPreviewROI.y, workflowPreviewROI.getMaxY(), true));
+	};
+
+	std::vector<ofVec2f> screenPoints;
+	for (const ofVec2f& point : ROIManualPolygon)
+	{
+		screenPoints.push_back(toWorkflowPoint(point));
+	}
+	if (workflowPreviewDragActive && ROIManualPolygon.size() > 0 && ROIManualPolygon.size() < 4 && ROICurrentPoint.x >= 0)
+	{
+		screenPoints.push_back(toWorkflowPoint(ROICurrentPoint));
+	}
+
+	ofPushStyle();
+	if (!screenPoints.empty())
+	{
+		ofNoFill();
+		ofSetLineWidth(5.0f);
+		ofSetColor(0, 0, 0, 190);
+		ofBeginShape();
+		for (const ofVec2f& point : screenPoints)
+		{
+			ofVertex(point.x, point.y);
+		}
+		ofEndShape(screenPoints.size() >= 4);
+
+		ofSetLineWidth(3.0f);
+		ofSetColor(0, 255, 95);
+		ofBeginShape();
+		for (const ofVec2f& point : screenPoints)
+		{
+			ofVertex(point.x, point.y);
+		}
+		ofEndShape(screenPoints.size() >= 4);
+	}
+
+	for (int i = 0; i < ROIManualPolygon.size(); ++i)
+	{
+		const ofVec2f point = toWorkflowPoint(ROIManualPolygon[i]);
+		ofFill();
+		ofSetColor(0, 0, 0, 220);
+		ofDrawCircle(point, 17.0f);
+		ofSetColor(255, 215, 30);
+		ofDrawCircle(point, 13.0f);
+		ofSetColor(0);
+		const std::string label = ofToString(i + 1);
+		ofDrawBitmapString(label, point.x - 4.0f, point.y + 5.0f);
+	}
+
+	if (ROIManualPolygon.size() < 4)
+	{
+		ofFill();
+		ofSetColor(0, 0, 0, 185);
+		ofDrawRectangle(workflowPreviewROI.x + 18.0f, workflowPreviewROI.y + 18.0f, 210.0f, 34.0f);
+		ofSetColor(255);
+		ofDrawBitmapString("Click corner " + ofToString(ROIManualPolygon.size() + 1) + " of 4",
+			workflowPreviewROI.x + 30.0f,
+			workflowPreviewROI.y + 40.0f);
+	}
+	ofPopStyle();
+}
+
 
 void KinectProjector::updateCalibration()
 {
@@ -1314,8 +1679,12 @@ void KinectProjector::updateROIFromFile()
 	if (xml.load(settingsFile))
 	{
 		ofXml settings = xml.findFirst("//KINECTSETTINGS");
-		kinectROI = getXmlValue<ofRectangle>(settings, "kinectROI");
-		ROIManualPolygon.clear();
+		kinectROI = getXmlRectangleValue(settings, "kinectROI", ofRectangle(0, 0, kinectRes.x, kinectRes.y));
+		ROIManualPolygon = getXmlPolygonValue(settings, "kinectROIPolygon");
+		if (ROIManualPolygon.size() != 4)
+		{
+			ROIManualPolygon = rectToPolygon(kinectROI);
+		}
 		setNewKinectROI();
 		ROICalibState = ROI_CALIBRATION_STATE_DONE;
 		return;
@@ -1538,7 +1907,8 @@ void KinectProjector::updateProjKinectAutoCalibration()
 				applicationState = APPLICATION_STATE_SETUP;
 				calibrationText = acceptedSurfaceOnlyFallback ? "Calibration successful: surface mapping only" : "Calibration successful";
 
-			//saveCalibrationAndSettings(); // Already done in updateROIFromCalibration
+				//saveCalibrationAndSettings(); // Already done in updateROIFromCalibration
+			backupDataFileIfExists("settings/calibration.xml", "calibration");
 			if (kpt->saveCalibration("settings/calibration.xml"))
 			{
 				ofLogVerbose("KinectProjector") << "update(): initialisation: Calibration saved ";
@@ -1642,7 +2012,22 @@ void KinectProjector::CalibrateNextPoint()
 
 		cvGrayImage = ofxCv::toCv(tempImage.getPixels());
 
+		if (cvGrayImage.empty())
+		{
+			trials++;
+			ofLogWarning("KinectProjector") << "autoCalib(): Empty Kinect calibration image on trial " << trials;
+			return;
+		}
+
+		cv::Rect imageBounds(0, 0, cvGrayImage.cols, cvGrayImage.rows);
 		cv::Rect tempROI((int)kinectROI.x, (int)kinectROI.y,(int)kinectROI.width, (int)kinectROI.height);
+		tempROI = tempROI & imageBounds;
+		if (tempROI.width <= 0 || tempROI.height <= 0)
+		{
+			trials++;
+			ofLogWarning("KinectProjector") << "autoCalib(): Invalid Kinect ROI for chessboard detection on trial " << trials;
+			return;
+		}
 		cv::Mat cvGrayROI = cvGrayImage(tempROI);
 
 		cv::Size patternSize = cv::Size(chessboardX - 1, chessboardY - 1);
@@ -1650,12 +2035,28 @@ void KinectProjector::CalibrateNextPoint()
 		int chessFlags = 0;
 
 		//bool foundChessboard = findChessboardCorners(cvGrayImage, patternSize, cvPoints, chessFlags);
-		bool foundChessboard = findChessboardCorners(cvGrayROI, patternSize, cvPoints, chessFlags);
-
-		if (!foundChessboard)
+		bool foundChessboard = false;
+		try
 		{
-			int chessFlags = cv::CALIB_CB_ADAPTIVE_THRESH + cv::CALIB_CB_FAST_CHECK;
 			foundChessboard = findChessboardCorners(cvGrayROI, patternSize, cvPoints, chessFlags);
+
+			if (!foundChessboard)
+			{
+				int chessFlags = cv::CALIB_CB_ADAPTIVE_THRESH + cv::CALIB_CB_FAST_CHECK;
+				foundChessboard = findChessboardCorners(cvGrayROI, patternSize, cvPoints, chessFlags);
+			}
+		}
+		catch (const cv::Exception& e)
+		{
+			cvPoints.clear();
+			foundChessboard = false;
+			ofLogWarning("KinectProjector") << "autoCalib(): OpenCV chessboard detection failed: " << e.what();
+		}
+		catch (const std::exception& e)
+		{
+			cvPoints.clear();
+			foundChessboard = false;
+			ofLogWarning("KinectProjector") << "autoCalib(): Chessboard detection failed: " << e.what();
 		}
 
 		// Changed logic so the "cleared" flag is not used - we do a long frame average instead
@@ -1868,9 +2269,9 @@ void KinectProjector::askToFlattenSand(){
     ofClear(255, 255, 255, 255);
     ofBackground(255);
     fboProjWindow.end();
-    calibrationText = "Flatten sand, then confirm";
+    calibrationText = "Prepare surface, then confirm";
     updateStatusGUI();
-    confirmModal->setMessage("Please flatten the sand surface.");
+    confirmModal->setMessage("Please smooth or flatten the active surface.");
     confirmModal->show();
     waitingForFlattenSand = true;
 }
@@ -1884,7 +2285,7 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 	bool forceScale = true;
 	if (forceScale)
 	{
-		fboMainWindow.draw(x, y, width, height);
+		drawCameraFeedPreview(x, y, width, height);
 	}
 	else
 	{
@@ -1939,6 +2340,29 @@ void KinectProjector::drawMainWindow(float x, float y, float width, float height
 	}
 }
 
+void KinectProjector::drawCameraFeedPreview(float x, float y, float width, float height)
+{
+	const float sourceW = std::max(1.0f, fboMainWindow.getWidth());
+	const float sourceH = std::max(1.0f, fboMainWindow.getHeight());
+	const bool quarterTurn = cameraFeedRotationDegrees == 90 || cameraFeedRotationDegrees == 270;
+	const float rotatedSourceW = quarterTurn ? sourceH : sourceW;
+	const float rotatedSourceH = quarterTurn ? sourceW : sourceH;
+	const float scale = std::min(width / rotatedSourceW, height / rotatedSourceH);
+	const float fittedW = rotatedSourceW * scale;
+	const float fittedH = rotatedSourceH * scale;
+	const float fittedX = x + (width - fittedW) * 0.5f;
+	const float fittedY = y + (height - fittedH) * 0.5f;
+	const float drawW = sourceW * scale;
+	const float drawH = sourceH * scale;
+
+	workflowPreviewROI.set(fittedX, fittedY, fittedW, fittedH);
+	ofPushMatrix();
+	ofTranslate(fittedX + fittedW * 0.5f, fittedY + fittedH * 0.5f);
+	ofRotateDeg(cameraFeedRotationDegrees);
+	fboMainWindow.draw(-drawW * 0.5f, -drawH * 0.5f, drawW, drawH);
+	ofPopMatrix();
+}
+
 void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, float height)
 {
 	workflowRecheckROI.set(0, 0, 0, 0);
@@ -1982,19 +2406,12 @@ void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, flo
 	ofSetColor(18, 22, 26);
 	ofDrawRectangle(previewX, previewY, previewW, previewH);
 	ofSetColor(255);
-	const float sourceW = std::max(1.0f, fboMainWindow.getWidth());
-	const float sourceH = std::max(1.0f, fboMainWindow.getHeight());
-	const float previewScale = std::min(previewW / sourceW, previewH / sourceH);
-	const float fittedW = sourceW * previewScale;
-	const float fittedH = sourceH * previewScale;
-	const float fittedX = previewX + (previewW - fittedW) * 0.5f;
-	const float fittedY = previewY + (previewH - fittedH) * 0.5f;
-	workflowPreviewROI.set(fittedX, fittedY, fittedW, fittedH);
-	fboMainWindow.draw(fittedX, fittedY, fittedW, fittedH);
+	drawCameraFeedPreview(previewX, previewY, previewW, previewH);
 	ofNoFill();
 	ofSetLineWidth(3);
 	ofSetColor(255, 65, 35);
-	ofDrawRectangle(fittedX, fittedY, fittedW, fittedH);
+	ofDrawRectangle(workflowPreviewROI);
+	drawWorkflowROIMarkers();
 
 	ofFill();
 	ofSetColor(18, 21, 24, 248);
@@ -2034,12 +2451,12 @@ void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, flo
 	else if (!ROIcalibrated)
 	{
 		title = "Step 1: Define sand region";
-		body = "Click the four corners of the active sand area in the camera view. This tells calibration which physical surface to use.";
+		body = "Click the four corners of the active surface in the camera view. This can be sand, a wall board, or a curtain test surface.";
 	}
 	else if (!projKinectCalibrated)
 	{
 		title = "Step 2: Calibrate projector";
-		body = "Project the calibration target onto the sand surface itself. Do not calibrate against a wall, screen, or vertical board.";
+		body = "Project the calibration target onto the same physical surface you defined, including a wall board or curtain test surface.";
 		if (calibrationText.find("failed") != std::string::npos || calibrationText.find("Failed") != std::string::npos)
 		{
 			failure = "Why it failed: " + calibrationText;
@@ -2062,23 +2479,23 @@ void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, flo
 			if (calibrationState == CALIBRATION_STATE_ROI_MANUAL_DETERMINATION)
 			{
 				title = "Define sand region";
-				body = "Click four corners around the sand surface. The app will connect them into a polygon.";
+				body = "Click four corners around the active surface. The app will connect them into a polygon.";
 		}
 		else if (waitingForFlattenSand)
 		{
-			title = "Flatten the sand";
-			body = "Smooth the sand surface, then continue. This captures the base plane.";
+			title = "Prepare the surface";
+			body = "Smooth or flatten the active surface, then continue. This captures the base plane.";
 		}
 		else if (waitingForRaisedSurface)
 		{
 			title = "Raise the surface";
-			body = "Place a flat board on top of the sandbox so the Kinect sees a higher, level surface. When it is steady, continue to capture the raised calibration points.";
+			body = "Place the flat board on the active surface so the Kinect sees a higher, level plane. When it is steady, continue to capture the raised calibration points.";
 		}
 		else if (calibrationState == CALIBRATION_STATE_PROJ_KINECT_AUTO_CALIBRATION ||
 				 (calibrationState == CALIBRATION_STATE_FULL_AUTO_CALIBRATION && fullCalibState == FULL_CALIBRATION_STATE_AUTOCALIB))
 		{
 			title = "Projector calibration";
-			body = "The target must be projected onto the sand surface. If it appears on the wall or bright background screen, calibration will fail.";
+			body = "The target must be projected onto the defined active surface. If it appears somewhere else, calibration will fail.";
 		}
 	}
 
@@ -2214,7 +2631,13 @@ void KinectProjector::drawSetupWorkflowScreen(float x, float y, float width, flo
 	}
 	else
 	{
-		workflowRunROI.set(textX, buttonY, buttonW, buttonH);
+		const float splitGap = 14.0f;
+		const float smallW = (buttonW - splitGap * 2.0f) * 0.29f;
+		workflowRedrawROI.set(textX, buttonY, smallW, buttonH);
+		workflowCalibrateROI.set(textX + smallW + splitGap, buttonY, smallW, buttonH);
+		workflowRunROI.set(textX + (smallW + splitGap) * 2.0f, buttonY, buttonW - smallW * 2.0f - splitGap * 2.0f, buttonH);
+		drawWorkflowButton(workflowRedrawROI, "Redraw region", true, ofColor(82, 92, 102));
+		drawWorkflowButton(workflowCalibrateROI, "Recalibrate", true, ofColor(255, 210, 30));
 		drawWorkflowButton(workflowRunROI, "Run sandbox", true, ofColor(0, 210, 120));
 	}
 
@@ -2421,29 +2844,32 @@ void KinectProjector::drawHardwareStatusPanel()
 void KinectProjector::drawChessboard(int x, int y, int chessboardSize) {
     fboProjWindow.begin();
     ofFill();
-    // Draw the calibration chess board on the projector window
-    float w = chessboardSize / chessboardX;
-    float h = chessboardSize / chessboardY;
-    
-    float xf = x-chessboardSize/2; // x and y are chess board center size
-    float yf = y-chessboardSize/2;
+    // Draw true square cells; the board is 5x4 cells, so its width and height differ.
+    float cellSize = chessboardSize / static_cast<float>(chessboardX);
+    float boardWidth = cellSize * chessboardX;
+    float boardHeight = cellSize * chessboardY;
+
+    float xf = x - boardWidth / 2.0f; // x and y are chess board center
+    float yf = y - boardHeight / 2.0f;
     
     currentProjectorPoints.clear();
     
 	ofClear(255, 255, 255, 0);
 	ofBackground(255); 
 	ofSetColor(0);
+	ofPushMatrix();
     ofTranslate(xf, yf);
     for (int j=0; j<chessboardY; j++) {
         for (int i=0; i<chessboardX; i++) {
-            int x0 = ofMap(i, 0, chessboardX, 0, chessboardSize);
-            int y0 = ofMap(j, 0, chessboardY, 0, chessboardSize);
+            float x0 = i * cellSize;
+            float y0 = j * cellSize;
             if (j>0 && i>0) {
                 currentProjectorPoints.push_back(ofVec2f(xf+x0, yf+y0));
             }
-            if ((i+j)%2==0) ofDrawRectangle(x0, y0, w, h);
+            if ((i+j)%2==0) ofDrawRectangle(x0, y0, cellSize, cellSize);
         }
     }
+	ofPopMatrix();
     ofSetColor(255);
     fboProjWindow.end();
 }
@@ -2623,6 +3049,9 @@ void KinectProjector::setupGui(){
 	auto viewFolder = gui->addFolder("View + Debug", ofColor::purple);
 	viewFolder->addToggle("Kinect depth view", drawKinectView)->setName("Draw kinect depth view");
 	viewFolder->addToggle("Kinect color view", drawKinectColorView)->setName("Draw kinect color view");
+	auto rotationDropdown = gui->addDropdown("Camera Rotation", { "0", "90", "180", "270" });
+	rotationDropdown->setName("Camera feed rotation");
+	rotationDropdown->select(cameraFeedRotationDegrees / 90);
 	viewFolder->addToggle("Dump Debug", DumpDebugFiles);
 	
 	auto tuningFolder = gui->addFolder("Advanced Tuning", ofColor::darkCyan);
@@ -2998,6 +3427,10 @@ void KinectProjector::onDropdownEvent(ofxDatGuiDropdownEvent e)
 	{
 		selectProjectorDisplay(e.child);
 	}
+	else if (e.target->is("Camera feed rotation"))
+	{
+		setCameraFeedRotation(e.child * 90);
+	}
 }
 
 void KinectProjector::StartManualROIDefinition()
@@ -3148,6 +3581,7 @@ void KinectProjector::saveCalibrationAndSettings()
 {
 	if (projKinectCalibrated)
 	{
+		backupDataFileIfExists("settings/calibration.xml", "calibration");
 		if (kpt->saveCalibration("settings/calibration.xml"))
 		{
 			ofLogVerbose("KinectProjector") << "update(): initialisation: Calibration saved ";
@@ -3176,7 +3610,12 @@ bool KinectProjector::loadSettings(){
         return false;
     }
     ofXml settings = xml.findFirst("//KINECTSETTINGS");
-    kinectROI = getXmlValue<ofRectangle>(settings, "kinectROI");
+    kinectROI = getXmlRectangleValue(settings, "kinectROI", ofRectangle(0, 0, kinectRes.x, kinectRes.y));
+	ROIManualPolygon = getXmlPolygonValue(settings, "kinectROIPolygon");
+	if (ROIManualPolygon.size() != 4)
+	{
+		ROIManualPolygon = rectToPolygon(kinectROI);
+	}
     basePlaneNormalBack = getXmlValue<ofVec3f>(settings, "basePlaneNormalBack");
     basePlaneNormal = basePlaneNormalBack;
     basePlaneOffsetBack = getXmlValue<ofVec3f>(settings, "basePlaneOffsetBack");
@@ -3189,6 +3628,7 @@ bool KinectProjector::loadSettings(){
     numAveragingSlots = getXmlValue<int>(settings, "numAveragingSlots");
 	doInpainting = getXmlValue<bool>(settings, "OutlierInpainting", true);
 	doFullFrameFiltering = getXmlValue<bool>(settings, "FullFrameFiltering", false);
+	cameraFeedRotationDegrees = normalizeCameraFeedRotation(getXmlValue<int>(settings, "CameraFeedRotationDegrees", 0));
     return true;
 }
 
@@ -3198,7 +3638,11 @@ bool KinectProjector::saveSettings()
 
     ofXml xml;
     ofXml settings = xml.appendChild("KINECTSETTINGS");
-    settings.appendChild("kinectROI").set(kinectROI);
+    settings.appendChild("kinectROI").set(rectangleToXmlValue(kinectROI));
+	if (ROIManualPolygon.size() == 4)
+	{
+		settings.appendChild("kinectROIPolygon").set(polygonToXmlValue(ROIManualPolygon));
+	}
     settings.appendChild("basePlaneNormalBack").set(basePlaneNormalBack);
     settings.appendChild("basePlaneOffsetBack").set(basePlaneOffsetBack);
     settings.appendChild("basePlaneEq").set(basePlaneEq);
@@ -3208,6 +3652,7 @@ bool KinectProjector::saveSettings()
     settings.appendChild("numAveragingSlots").set(numAveragingSlots);
 	settings.appendChild("OutlierInpainting").set(doInpainting);
 	settings.appendChild("FullFrameFiltering").set(doFullFrameFiltering);
+	settings.appendChild("CameraFeedRotationDegrees").set(cameraFeedRotationDegrees);
     return xml.save(settingsFile);
 }
 
@@ -3234,6 +3679,11 @@ void KinectProjector::ProcessChessBoardInput(ofxCvGrayscaleImage& image)
 		}
 	}
 	std::cout << "Min " << (int)minV << " max " << (int)maxV << std::endl;
+	if (maxV <= minV)
+	{
+		ofLogWarning("KinectProjector") << "ProcessChessBoardInput(): ROI has no contrast; skipping normalization";
+		return;
+	}
 	double scale = 255.0 / (maxV - minV);
 
 	for (int y = 0; y < image.height; y++)
@@ -3254,6 +3704,12 @@ void KinectProjector::ProcessChessBoardInput(ofxCvGrayscaleImage& image)
 void KinectProjector::CheckAndNormalizeKinectROI()
 {
 	bool fixed = false;
+	if (kinectROI.width <= 1 || kinectROI.height <= 1)
+	{
+		ofLogWarning("KinectProjector") << "CheckAndNormalizeKinectROI(): Saved Kinect ROI was invalid: " << kinectROI;
+		kinectROI.set(0, 0, kinectRes.x, kinectRes.y);
+		fixed = true;
+	}
 	if (kinectROI.x < 0)
 	{
 		fixed = true;

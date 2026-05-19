@@ -82,7 +82,7 @@ private:
 	std::shared_ptr<KinectProjector> kinectProjector;
 	SandSurfaceRenderer* sandSurfaceRenderer;
 	CBoidGameController boidGameController;
-		bool runSettingsOpen = true;
+		bool runSettingsOpen = false;
 		int runPanelPage = 0;
 		int runGameDifficulty = 2;
 		std::string activeRunDragId;

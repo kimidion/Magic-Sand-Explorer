@@ -83,6 +83,7 @@ public:
 
 	    float getHeightMapScale() const;
 	    float getHeightMapOffset() const;
+	    void resetHeightMapTransform();
 	    void setHeightMapScale(float scale);
 	    void setHeightMapOffset(float offset);
 
@@ -130,6 +131,7 @@ private:
     // Projector Resolution
     int projResX, projResY;
 	ofRectangle kinectROI;
+	std::vector<ofVec2f> kinectROIPolygon;
 
     // Conversion matrices
     ofMatrix4x4                 transposedKinectProjMatrix;

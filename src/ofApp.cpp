@@ -35,9 +35,9 @@ void ofApp::setup() {
 	ofSetLogLevel("ofShader", OF_LOG_ERROR);
 	ofSetLogLevel("ofxKinect", OF_LOG_WARNING);
 	runFontsLoaded =
-		runFontSmall.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 22, true, true) &&
-		runFont.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 28, true, true) &&
-		runFontLarge.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 40, true, true);
+		runFontSmall.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 14, true, true) &&
+		runFont.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 18, true, true) &&
+		runFontLarge.load("ofxbraitsch/fonts/Roboto-Regular.ttf", 28, true, true);
 
 	// Setup kinectProjector
 	kinectProjector = std::make_shared<KinectProjector>(projWindow);
@@ -136,6 +136,10 @@ void ofApp::keyPressed(int key)
 	{
 		kinectProjector->cancelCalibration("Calibration cancelled. Adjust camera/projector, then try again.");
 	}
+	else if (key == 'v')
+	{
+		kinectProjector->cycleCameraFeedRotation();
+	}
 	else if (key == 'f' || key == 'r')
 	{
 		if (kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
@@ -199,6 +203,10 @@ void ofApp::mouseDragged(int x, int y, int button) {
 	{
 		return;
 	}
+	if (kinectProjector && kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
+	{
+		return;
+	}
 
 	if (kinectProjector->handleWorkflowPreviewMouseDragged(x, y, button))
 	{
@@ -213,6 +221,10 @@ void ofApp::mouseDragged(int x, int y, int button) {
 void ofApp::mousePressed(int x, int y, int button) 
 {
 	if (handleRunModeClick(x, y))
+	{
+		return;
+	}
+	if (kinectProjector && kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
 	{
 		return;
 	}
@@ -250,6 +262,10 @@ void ofApp::mouseReleased(int x, int y, int button) {
 		}
 	}
 	activeRunDragId.clear();
+	if (kinectProjector && kinectProjector->GetApplicationState() == KinectProjector::APPLICATION_STATE_RUNNING)
+	{
+		return;
+	}
 
 	if (kinectProjector->handleWorkflowPreviewMouseReleased(x, y, button))
 	{
@@ -454,7 +470,7 @@ void ofApp::drawRunButton(const ofRectangle& rect, const std::string& label, boo
 	ofDrawRectRounded(rect, 8.0f);
 	ofFill();
 	ofSetColor(240, 244, 246);
-	drawRunText(label, rect.x + 22.0f, rect.y + rect.height * 0.5f + 10.0f, 2.0f);
+	drawRunText(label, rect.x + 16.0f, rect.y + rect.height * 0.5f + 7.0f, 2.0f);
 }
 
 void ofApp::drawRunToggle(const ofRectangle& rect, const std::string& label, bool checked)
@@ -465,9 +481,9 @@ void ofApp::drawRunToggle(const ofRectangle& rect, const std::string& label, boo
 void ofApp::drawRunSlider(const ofRectangle& rect, const std::string& label, float value, float minValue, float maxValue, const std::string& valueLabel)
 {
 	ofSetColor(218, 226, 230);
-	drawRunText(label, rect.x, rect.y - 22.0f, 1.8f);
+	drawRunText(label, rect.x, rect.y - 12.0f, 1.0f);
 	ofSetColor(154, 166, 172);
-	drawRunText(valueLabel, rect.getMaxX() - 190.0f, rect.y - 22.0f, 1.8f);
+	drawRunText(valueLabel, rect.getMaxX() - 72.0f, rect.y - 12.0f, 1.0f);
 	ofFill();
 	ofSetColor(46, 53, 58);
 	ofDrawRectRounded(rect, 8.0f);
@@ -475,15 +491,15 @@ void ofApp::drawRunSlider(const ofRectangle& rect, const std::string& label, flo
 	ofSetColor(72, 154, 197);
 	ofDrawRectRounded(ofRectangle(rect.x, rect.y, rect.width * t, rect.height), 8.0f);
 	ofSetColor(235, 244, 248);
-	ofDrawCircle(rect.x + rect.width * t, rect.y + rect.height * 0.5f, 22.0f);
+	ofDrawCircle(rect.x + rect.width * t, rect.y + rect.height * 0.5f, 14.0f);
 }
 
 void ofApp::drawRunTabs(float x, float y, float width)
 {
 	const float gap = 16.0f;
 	const float tabW = (width - gap) * 0.5f;
-	ofRectangle colorTab(x, y, tabW, 68.0f);
-	ofRectangle gameTab(x + tabW + gap, y, tabW, 68.0f);
+	ofRectangle colorTab(x, y, tabW, 52.0f);
+	ofRectangle gameTab(x + tabW + gap, y, tabW, 52.0f);
 	addRunButton("run-tab-color", colorTab);
 	addRunButton("run-tab-game", gameTab);
 	drawRunButton(colorTab, "Color", runPanelPage == 0);
@@ -516,17 +532,17 @@ void ofApp::drawRunModeSidebar()
 	ofDrawRectangle(controlsSectionROI);
 
 	float x = panelX + margin;
-	float y = panelY + 42.0f;
+	float y = panelY + 38.0f;
 	float w = panelW - margin * 2.0f;
 	ofSetColor(250, 252, 252);
 	drawRunText("Run Sandbox", x, y, 2.8f);
-	ofRectangle closeRect(panelX + panelW - 176.0f, panelY + 18.0f, 144.0f, 68.0f);
+	ofRectangle closeRect(panelX + panelW - 144.0f, panelY + 18.0f, 112.0f, 52.0f);
 	addRunButton("toggle-settings", closeRect);
 	drawRunButton(closeRect, "Close");
 
-	y += 60.0f;
+	y += 54.0f;
 	drawRunTabs(x, y, w);
-	y += 94.0f;
+	y += 74.0f;
 	const float halfW = (w - 18.0f) * 0.5f;
 
 	if (runPanelPage == 0)
@@ -539,35 +555,35 @@ void ofApp::drawRunModeSidebar()
 	drawRunText(sandSurfaceRenderer->getColorMapFile(), x + 104.0f, y, 2.1f);
 	y += 28.0f;
 
-	ofRectangle prevRect(x, y, halfW, 72.0f);
-	ofRectangle nextRect(x + halfW + 18.0f, y, halfW, 72.0f);
+	ofRectangle prevRect(x, y, halfW, 52.0f);
+	ofRectangle nextRect(x + halfW + 18.0f, y, halfW, 52.0f);
 	addRunButton("color-prev", prevRect);
 	addRunButton("color-next", nextRect);
 	drawRunButton(prevRect, "Previous");
 	drawRunButton(nextRect, "Next");
-	y += 92.0f;
+	y += 82.0f;
 
 	std::ostringstream scaleText;
 	scaleText << std::fixed << std::setprecision(2) << sandSurfaceRenderer->getHeightMapScale();
-	ofRectangle scaleRect(x, y, w, 42.0f);
+	ofRectangle scaleRect(x, y, w, 32.0f);
 	addRunSlider("scale", scaleRect, 0.1f, 8.0f);
 	drawRunSlider(scaleRect, "Scale", sandSurfaceRenderer->getHeightMapScale(), 0.1f, 8.0f, scaleText.str());
-	y += 72.0f;
+	y += 62.0f;
 
 	std::ostringstream offsetText;
 	offsetText << std::fixed << std::setprecision(2) << sandSurfaceRenderer->getHeightMapOffset();
-	ofRectangle offsetRect(x, y, w, 42.0f);
+	ofRectangle offsetRect(x, y, w, 32.0f);
 	addRunSlider("offset", offsetRect, -2.0f, 2.0f);
 	drawRunSlider(offsetRect, "Offset", sandSurfaceRenderer->getHeightMapOffset(), -2.0f, 2.0f, offsetText.str());
-	y += 72.0f;
+	y += 62.0f;
 
-	ofRectangle contourRect(x, y, halfW, 72.0f);
-	ofRectangle resetRect(x + halfW + 18.0f, y, halfW, 72.0f);
+	ofRectangle contourRect(x, y, halfW, 52.0f);
+	ofRectangle resetRect(x + halfW + 18.0f, y, halfW, 52.0f);
 	addRunButton("contours", contourRect);
 	addRunButton("reset-map", resetRect);
 	drawRunToggle(contourRect, "Contours", sandSurfaceRenderer->getDrawContourLines());
 	drawRunButton(resetRect, "Reset");
-	y += 88.0f;
+	y += 72.0f;
 
 	drawRunSectionTitle("Palette Keys", x, y, w);
 	y += 40.0f;
@@ -580,7 +596,7 @@ void ofApp::drawRunModeSidebar()
 		for (int i = 0; i < keys.size(); ++i)
 		{
 			int keyIndex = keys.size() - 1 - i;
-			ofRectangle swatch(x + i * (swatchW + swatchGap), y, swatchW, 54.0f);
+			ofRectangle swatch(x + i * (swatchW + swatchGap), y, swatchW, 38.0f);
 			addRunButton("key-" + ofToString(i), swatch);
 			ofSetColor(keys[keyIndex].color);
 			ofDrawRectRounded(swatch, 4.0f);
@@ -590,7 +606,7 @@ void ofApp::drawRunModeSidebar()
 			ofDrawRectRounded(swatch, 4.0f);
 			ofFill();
 		}
-			y += 78.0f;
+			y += 64.0f;
 
 		int selectedKeyIndex = keys.size() - 1 - ofClamp(selected, 0, static_cast<int>(keys.size()) - 1);
 		float keyHeight = (hasPendingKeyHeight && activeRunDragId == "key-height") ? pendingKeyHeight : keys[selectedKeyIndex].height;
@@ -598,14 +614,14 @@ void ofApp::drawRunModeSidebar()
 		float maxHeight = (selectedKeyIndex < keys.size() - 1) ? keys[selectedKeyIndex + 1].height : keyHeight + 100.0f;
 		std::ostringstream heightText;
 		heightText << std::fixed << std::setprecision(0) << keyHeight;
-		ofRectangle keyHeightRect(x, y, w, 42.0f);
+		ofRectangle keyHeightRect(x, y, w, 32.0f);
 		addRunSlider("key-height", keyHeightRect, minHeight, maxHeight);
 		drawRunSlider(keyHeightRect, "Height", keyHeight, minHeight, maxHeight, heightText.str());
-		y += 72.0f;
+		y += 60.0f;
 
-		ofRectangle addRect(x, y, (w - 36.0f) / 3.0f, 66.0f);
-		ofRectangle removeRect(addRect.getMaxX() + 18.0f, y, addRect.width, 66.0f);
-		ofRectangle moveRect(removeRect.getMaxX() + 18.0f, y, addRect.width, 66.0f);
+		ofRectangle addRect(x, y, (w - 36.0f) / 3.0f, 52.0f);
+		ofRectangle removeRect(addRect.getMaxX() + 18.0f, y, addRect.width, 52.0f);
+		ofRectangle moveRect(removeRect.getMaxX() + 18.0f, y, addRect.width, 52.0f);
 		addRunButton("key-add", addRect);
 		addRunButton("key-remove", removeRect);
 		addRunButton("key-move", moveRect);
@@ -687,6 +703,7 @@ bool ofApp::handleRunModeClick(float x, float y)
 		else if (hit.id == "reset-map")
 		{
 			sandSurfaceRenderer->resetColorMap();
+			sandSurfaceRenderer->resetHeightMapTransform();
 		}
 		else if (hit.id.rfind("key-", 0) == 0 && hit.id != "key-add" && hit.id != "key-remove" && hit.id != "key-move" && hit.id != "key-height")
 		{

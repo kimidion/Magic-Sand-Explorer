@@ -55,8 +55,16 @@ bool setWindowDimensions(ofGLFWWindowSettings& settings, int windowsNum) {
 		return true;
 	}
 	else {
-		settings.setSize(1900, 1200); // Default settings
-		settings.setPosition(ofVec2f(0, 0));
+		if (windowsNum == 0)
+		{
+			settings.setSize(1280, 900); // Visible fallback for the control interface
+			settings.setPosition(ofVec2f(40, 40));
+		}
+		else
+		{
+			settings.setSize(1280, 800); // Projector fallback
+			settings.setPosition(ofVec2f(80, 80));
+		}
 		return false;
 	}
 
@@ -82,7 +90,7 @@ int main() {
 	settings.decorated = false;
 	settings.shareContextWith = mainWindow;
 	shared_ptr<ofAppBaseWindow> secondWindow = ofCreateWindow(settings);
-	secondWindow->setVerticalSync(false);
+	secondWindow->setVerticalSync(true);
 
 	shared_ptr<ofApp> mainApp(new ofApp);
 	ofAddListener(secondWindow->events().draw, mainApp.get(), &ofApp::drawProjWindow);
